@@ -246,15 +246,15 @@ if focusSeconds >= Double(prefs.focusMinutes * 60) {
 
 **背景**：`Tools/*/main.swift` 编出来是**裸可执行文件**，不是 `.app`。
 
-**坑**：`Bundle.main.resourcePath` 此时等于**可执行文件所在目录**，不是项目的 `Resources/`。工具放在 `/tmp/ws4/run` 就会去 `/tmp/ws4/` 找 `mascot_*.png`，找不到就渲染出空白头像（而且不报错）。
+**坑**：`Bundle.main.resourcePath` 此时等于**可执行文件所在目录**，不是项目的 `Resources/`。工具放在 `/tmp/ws4/run` 就会去 `/tmp/ws4/mascots/` 找素材，找不到就渲染出空白头像（而且不报错）。
 
-**做法**：跑之前先 `cp Resources/mascot_*.png /tmp/ws4/`。写进 [DEVELOPMENT.md](DEVELOPMENT.md#56-出预览视频) 了。
+**做法**：跑之前先 `cp -R Resources/mascots /tmp/ws4/`。写进 [DEVELOPMENT.md](DEVELOPMENT.md#56-出预览视频) 了。
 
 ---
 
 ## D-16 · 素材不入库，成品入库
 
-**决策**：`Resources/frames/`（30MB AI 原始图）进 `.gitignore`；`Resources/mascot_*.png`（12MB 成品）入库。
+**决策**：`Resources/frames/`（30MB AI 原始图）进 `.gitignore`；`Resources/mascots/`（12MB 成品）入库。
 
 **理由**：成品是运行时必需（build.sh 要拷进 bundle），原始图只是重新对齐时的中间产物。想改素材的人自己重新出图即可，缺了不影响编译和运行。
 

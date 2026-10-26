@@ -17,6 +17,7 @@ from PIL import Image
 
 from add_up_frames import render
 from normalize import strip_background
+from paths import frame_raw, mascot_png
 
 HEAD_BAND = 0.14  # 取内容包围盒顶部这么高的一条，量它的宽度 ≈ 头顶宽度
 
@@ -52,13 +53,13 @@ def main():
     def opt(name, default=None):
         return opts.get(name, default)
 
-    ref = Image.open(f"Resources/mascot_{style}_sit.png")
+    ref = Image.open(mascot_png(style, "sit"))
     rm = measure(ref)
     ref_head = opt("--head", rm["head"])
     print(f"参照 sit: 头顶宽={ref_head} 底边={rm['bottom']} 中心x={rm['cx']:.0f}")
 
     base = strip_background(
-        Image.open(f"Resources/frames/{style}_{poses[0]}_raw.png").convert("RGBA"))
+        Image.open(frame_raw(style, poses[0])).convert("RGBA"))
     bm = measure(base)
     s = opt("--win", bm["head"] * 512.0 / ref_head)
     # 竖向锚点：默认对齐落地点；--top N 表示改为对齐头顶到画布 y=N
@@ -73,8 +74,8 @@ def main():
 
     for pose in poses:
         raw = base if pose == poses[0] else strip_background(
-            Image.open(f"Resources/frames/{style}_{pose}_raw.png").convert("RGBA"))
-        dst = f"Resources/mascot_{style}_{pose}.png"
+            Image.open(frame_raw(style, pose)).convert("RGBA"))
+        dst = mascot_png(style, pose)
         render(raw, (cx, cy), s, dst)
         print(f"  {pose} -> {dst}")
 

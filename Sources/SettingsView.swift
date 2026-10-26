@@ -138,7 +138,7 @@ struct SettingsView: View {
         } label: {
             VStack(spacing: 3) {
                 ZStack {
-                    if let image = MascotAssets.image("mascot_\(rule.style)_up") {
+                    if let image = MascotAssets.image(style: rule.style, pose: "up") {
                         Image(nsImage: image)
                             .resizable()
                             .scaledToFit()

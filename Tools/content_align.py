@@ -17,6 +17,7 @@ from PIL import Image
 
 from add_up_frames import render
 from normalize import strip_background
+from paths import frame_raw, mascot_png
 
 
 def bbox(im):
@@ -33,7 +34,7 @@ def main():
     ref_pose = sys.argv[2]
     poses = sys.argv[3:]
 
-    ref = Image.open(f"Resources/mascot_{style}_{ref_pose}.png").convert("RGBA")
+    ref = Image.open(mascot_png(style, ref_pose)).convert("RGBA")
     rb = bbox(ref)
     rw, rh = ref.size
     ref_h = rb[3] - rb[1]
@@ -43,7 +44,7 @@ def main():
 
     for pose in poses:
         raw = strip_background(
-            Image.open(f"Resources/frames/{style}_{pose}_raw.png").convert("RGBA"))
+            Image.open(frame_raw(style, pose)).convert("RGBA"))
         cb = bbox(raw)
         if cb is None:
             print(f"{pose}: 找不到内容，跳过")
@@ -57,7 +58,7 @@ def main():
         cx = raw_cx + s / 2 - ref_cx * s / rw
         cy = raw_cy + s / 2 - ref_cy * s / rh
 
-        dst = f"Resources/mascot_{style}_{pose}.png"
+        dst = mascot_png(style, pose)
         render(raw, (cx, cy), s, dst)
 
         out = bbox(Image.open(dst))

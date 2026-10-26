@@ -17,6 +17,7 @@ from PIL import Image
 
 from add_up_frames import render
 from normalize import strip_background
+from paths import frame_raw, mascot_png
 
 LEFT_LIMIT = 0.60  # 只看左侧，避开身上的冷灰阴影
 
@@ -38,7 +39,7 @@ def main():
     style = sys.argv[1]
     # 参照用同一形象自己的坐姿帧：椅子是这一系列里唯一不动的物体，
     # 以它为锚点，走过去/站起来/出拳的帧才能共用同一个机位。
-    ref_path = f"Resources/mascot_{style}_sit.png"
+    ref_path = mascot_png(style, "sit")
     ref = Image.open(ref_path)
     rb = chair_bbox(ref)
     if rb is None:
@@ -50,7 +51,7 @@ def main():
 
     for pose in sys.argv[2:]:
         raw = strip_background(
-            Image.open(f"Resources/frames/{style}_{pose}_raw.png").convert("RGBA"))
+            Image.open(frame_raw(style, pose)).convert("RGBA"))
         cb = chair_bbox(raw)
         if cb is None:
             print(f"{pose}: 找不到椅子，跳过")
@@ -61,7 +62,7 @@ def main():
         cx = cb[0] + s / 2 - rb[0] * s / rw
         cy = cb[1] + s / 2 - rb[1] * s / rw
 
-        dst = f"Resources/mascot_{style}_{pose}.png"
+        dst = mascot_png(style, pose)
         render(raw, (cx, cy), s, dst)
         print(f"{pose}: 椅子高 {raw_h}→窗口 {s:.0f} 中心=({cx:.0f},{cy:.0f}) -> {dst}")
 

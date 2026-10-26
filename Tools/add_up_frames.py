@@ -11,6 +11,7 @@ import sys
 from PIL import Image
 
 from normalize import strip_background, clear_edges
+from paths import ensure_parent, frame_raw, mascot_png
 
 
 def bbox(im, thr=12):
@@ -38,9 +39,9 @@ def content_extent(im):
 
 def solve_crop(style, ref_pose="yawn2"):
     raw = strip_background(
-        Image.open(f"Resources/frames/{style}_{ref_pose}_raw.png").convert("RGBA"))
+        Image.open(frame_raw(style, ref_pose)).convert("RGBA"))
     rb = bbox(raw)
-    png = Image.open(f"Resources/mascot_{style}_{ref_pose}.png").convert("RGBA")
+    png = Image.open(mascot_png(style, ref_pose)).convert("RGBA")
     pb = bbox(png)
     sc = (rb[2] - rb[0]) / (pb[2] - pb[0])
     size = 512 * sc
@@ -55,7 +56,7 @@ def render(up, center, size, dst):
     box.paste(up, (int(round(size / 2 - cx)), int(round(size / 2 - cy))))
     out = box.resize((512, 512), Image.LANCZOS)
     clear_edges(out)
-    out.save(dst)
+    out.save(ensure_parent(dst))
     return out
 
 
@@ -64,9 +65,9 @@ def main():
     for style in styles:
         _, (cx, cy, size) = solve_crop(style)
         up = strip_background(
-            Image.open(f"Resources/frames/{style}_up_raw.png").convert("RGBA"))
+            Image.open(frame_raw(style, "up")).convert("RGBA"))
 
-        sit = Image.open(f"Resources/mascot_{style}_sit.png").convert("RGBA")
+        sit = Image.open(mascot_png(style, "sit")).convert("RGBA")
         target = content_extent(sit)
 
         # 第一次按基准窗口渲染，量出主体现有尺寸，再按比例放大窗口
@@ -74,7 +75,7 @@ def main():
         got = content_extent(probe)
         k = got / target
         size2 = size * k
-        dst = f"Resources/mascot_{style}_up.png"
+        dst = mascot_png(style, "up")
         out = render(up, (cx, cy), size2, dst)
         print(f"{style}: 窗口 {size:.0f}->{size2:.0f}（k={k:.3f}） "
               f"内容 {got}->{content_extent(out)} 目标={target} -> {dst}")

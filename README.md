@@ -211,4 +211,4 @@ A：短期内不会。这个项目的核心是一堆 macOS 专有行为（NSPane
 
 [MIT](LICENSE)
 
-素材（`Resources/mascot_*.png`）同源同一许可，可自由使用与再生成。
+素材（`Resources/mascots/`，按形象分目录）同源同一许可，可自由使用与再生成。

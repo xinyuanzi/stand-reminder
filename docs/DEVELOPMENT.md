@@ -27,7 +27,7 @@ open 歇会儿.app
 1. **编译** — `swiftc -O -target arm64-apple-macos13.0` 把 11 个 `Sources/*.swift` 编成单个可执行文件
    - 纯 SwiftUI + AppKit，**没有任何第三方依赖**，也没有 `Package.swift` / `.xcodeproj`
    - 顺序无关，`swiftc` 直接吃整个文件列表
-2. **组装 bundle** — 拷 `Resources/Info.plist` 和所有 `Resources/mascot_*.png` 进 `.app/Contents/Resources/`
+2. **组装 bundle** — 拷 `Resources/Info.plist`，以及整个 `Resources/mascots/` 目录进 `.app/Contents/Resources/`（保留按形象分的子目录）
 3. **临时签名** — `codesign --force --deep --sign -`，本地自用够
 
 改完代码直接重跑 `./build.sh`。**改素材也一样要重跑**，因为素材是拷进 bundle 的，不是运行时读取源码目录。
@@ -51,9 +51,10 @@ open 歇会儿.app
 │   └── SettingsView.swift    SwiftUI 设置页「Form」                      (214)
 ├── Resources/
 │   ├── Info.plist
-│   ├── mascot_{style}_{pose}.png   成品素材（512×512 透明 PNG）
-│   └── frames/                     AI 原始出图（1024×1024，**不入库**）
+│   ├── mascots/{style}/{pose}.png  成品素材（512×512 透明 PNG）
+│   └── frames/{style}/{pose}_raw.png  AI 原始出图（1024×1024，**不入库**）
 ├── Tools/                    开发期脚本与测试工具，不参与发布
+│   ├── paths.py              素材路径的唯一出处（改目录结构只改这里）
 │   ├── normalize.py          白底抠透明 + 统一裁切
 │   ├── add_up_frames.py      反解裁切窗口 + render
 │   ├── chair_align.py        对齐①：按椅子锚点
@@ -137,13 +138,24 @@ private var displayPose: MascotPose {
 
 ### 5.1 命名约定
 
+**一个形象一个文件夹**。四个形象 × 13~16 张 = 近 60 个文件，平铺在 `Resources/` 根目录时前缀全一样，加第五个形象就没法扫了。
+
 ```
-Resources/frames/{style}_{pose}_raw.png      ← AI 原始图，1024×1024，白底
-Resources/mascot_{style}_{pose}.png          ← 抠图对齐后的成品，512×512，透明
+Resources/frames/{style}/{pose}_raw.png      ← AI 原始图，1024×1024，白底（不入库）
+Resources/mascots/{style}/{pose}.png         ← 抠图对齐后的成品，512×512，透明
 ```
 
 `style`：`a` 橘猫 / `b` 水獭 / `c` 小熊 / `d` 猫头鹰
 `pose`：`sit` `blink` `yawn1` `yawn2` `scratch` `stand` `up` `punch1` `punch2` `flap1` `flap2` `sitdown` `gaze_left` `gaze_right` `gaze_up` `gaze_down`
+
+路径只在两处出现，改结构时都改这两处：
+
+| 位置 | 怎么用 |
+|---|---|
+| `Tools/paths.py` | 所有 Python 脚本调 `frame_raw(style, pose)` / `mascot_png(style, pose)`，路径基于 `__file__` 计算，**脚本可以在任何目录执行** |
+| `MascotAssets.image(style:pose:)` | App 侧唯一入口。`.app` 里走 `Bundle.main.url(forResource:subdirectory: "mascots/{style}")`，裸可执行文件（测试工具）走 `resourcePath` 拼路径兜底 |
+
+**加形象不需要改任何路径代码**，建个 `Resources/mascots/e/` 目录就能用。
 
 **缺素材不会崩**，`MascotCard.image(for:)` 会按 `fallbackName` 退到语义最接近的一帧（比如所有 gaze 退到 `sit`）。但**别把没画完的姿态先注册进 `Unlocks`**——用户选中后会因为缺素材全部回落同一帧，等于一只不动的雕塑。
 
@@ -188,7 +200,7 @@ PYTHONPATH=Tools python3 -c "from normalize import strip_background; ..."
 | `fixed_align.py` | **固定窗口**，只从参照帧解一次 | **原始图机位没动的一整批**（推荐默认） | 某帧 AI 真画错了尺寸——这时应该**重生成**，不是对齐 |
 
 ```bash
-# 推荐：整批统一取景（从项目根目录跑，Tools 要进 PYTHONPATH）
+# 推荐：整批统一取景（路径由 Tools/paths.py 计算，可以在任何目录执行）
 PYTHONPATH=Tools python3 Tools/fixed_align.py d sit stand up flap1 flap2 sitdown
 
 # 只改局部（如视线）
@@ -204,7 +216,7 @@ PYTHONPATH=Tools python3 Tools/content_align.py a sit gaze_left gaze_right gaze_
 python3 -c "
 from PIL import Image
 for p in ['sit','blink','yawn1']:
-    a=Image.open(f'Resources/mascot_d_{p}.png').convert('RGBA').split()[3]
+    a=Image.open(f'Resources/mascots/d/{p}.png').convert('RGBA').split()[3]
     print(p, a.getbbox())
 "
 
@@ -224,7 +236,7 @@ ffmpeg -y -framerate 12.5 -i /tmp/strip_%02d.png -c:v libx264 -pix_fmt yuv420p o
 
 `12.5 = 1/0.08`。**采样间隔要短于最短的动作节拍**（振翅是 0.12~0.17s，所以用 0.08s），否则会混叠，看起来像掉帧。
 
-> ⚠️ 无 bundle 的命令行工具里 `Bundle.main.resourcePath` = 可执行文件所在目录，不是项目 `Resources/`。跑测试工具前先把素材拷到二进制旁边：`cp Resources/mascot_*.png /tmp/ws4/`。
+> ⚠️ 无 bundle 的命令行工具里 `Bundle.main.resourcePath` = 可执行文件所在目录，不是项目 `Resources/`。跑测试工具前先把素材目录拷到二进制旁边：`cp -R Resources/mascots /tmp/ws4/`。
 
 ## 6. 测试工具
 
@@ -240,7 +252,7 @@ swiftc -O -target arm64-apple-macos13.0 -framework AppKit -framework SwiftUI \
   Sources/MascotAnimator.swift Sources/Prefs.swift Sources/Habits.swift \
   Sources/MascotCard.swift Sources/ReminderPanel.swift \
   Tools/WindowShot/main.swift -o /tmp/ws4/run
-cp Resources/mascot_*.png /tmp/ws4/
+cp -R Resources/mascots /tmp/ws4/
 /tmp/ws4/run d soft        # 单张 → /tmp/win_d_soft.png
 /tmp/ws4/run d soft strip  # 帧序 → /tmp/strip_*.png
 ```
@@ -259,7 +271,7 @@ cp Resources/mascot_*.png /tmp/ws4/
 ## 7. 新增一个形象（Checklist）
 
 1. **先只出 1 张坐姿定妆照**给相关人确认。别一次画 10 张，造型不对就全废
-2. 定妆照转成品：`normalize.py` → 作为该形象的参照帧 `mascot_{x}_sit.png`
+2. 定妆照转成品：`normalize.py` → 作为该形象的参照帧 `Resources/mascots/{x}/sit.png`
 3. 按 [5.2](#52-出图提示词模板) 逐张出动作，命名 `{x}_{pose}_raw.png`
 4. 坐姿家族（blink / yawn / scratch / sitdown / gaze_*）→ `fixed_align.py`
 5. 站立家族（stand / up / punch 或 flap）→ 先确认机位没变，再 `fixed_align.py`

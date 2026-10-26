@@ -27,6 +27,7 @@ from PIL import Image
 
 from add_up_frames import bbox, render
 from normalize import strip_background
+from paths import frame_raw, mascot_png
 
 
 def main():
@@ -35,9 +36,9 @@ def main():
     poses = sys.argv[3:]
 
     ref_raw = strip_background(
-        Image.open(f"Resources/frames/{style}_{ref_pose}_raw.png").convert("RGBA"))
+        Image.open(frame_raw(style, ref_pose)).convert("RGBA"))
     rb = bbox(ref_raw)
-    ref_png = Image.open(f"Resources/mascot_{style}_{ref_pose}.png").convert("RGBA")
+    ref_png = Image.open(mascot_png(style, ref_pose)).convert("RGBA")
     pb = bbox(ref_png)
 
     # 只从参照帧反解一次窗口，之后所有帧照抄
@@ -49,9 +50,9 @@ def main():
 
     for pose in poses:
         raw = strip_background(
-            Image.open(f"Resources/frames/{style}_{pose}_raw.png").convert("RGBA"))
+            Image.open(frame_raw(style, pose)).convert("RGBA"))
         cb = bbox(raw)
-        dst = f"Resources/mascot_{style}_{pose}.png"
+        dst = mascot_png(style, pose)
         render(raw, (cx, cy), size, dst)
 
         out = bbox(Image.open(dst).convert("RGBA"))

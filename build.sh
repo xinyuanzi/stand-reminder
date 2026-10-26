@@ -31,7 +31,8 @@ swiftc -O \
 
 echo "==> 组装 bundle"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
-cp Resources/mascot_*.png "$APP/Contents/Resources/"
+# 素材按形象分目录，整目录拷：Contents/Resources/mascots/{a,b,c,d}/*.png
+cp -R Resources/mascots "$APP/Contents/Resources/"
 
 echo "==> 临时签名"
 codesign --force --deep --sign - "$APP" 2>&1 | tail -1

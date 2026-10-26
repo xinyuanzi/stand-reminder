@@ -3,15 +3,32 @@ import AppKit
 
 /// 吉祥物素材。动作帧每 0.13~0.6 秒换一张，如果每次都 NSImage(contentsOf:)
 /// 就是每秒几次读盘 200KB+，所以统一走内存缓存。
+///
+/// 素材按形象分目录：`Resources/mascots/{style}/{pose}.png`。
+/// 一个形象 13~16 张，四个形象平铺在 Resources 根目录时是近 60 个同前缀文件，
+/// 加第五个形象就彻底没法扫了。
 enum MascotAssets {
     private static let cache = NSCache<NSString, NSImage>()
 
-    static func image(_ name: String) -> NSImage? {
-        if let hit = cache.object(forKey: name as NSString) { return hit }
-        guard let url = Bundle.main.url(forResource: name, withExtension: "png"),
-              let image = NSImage(contentsOf: url) else { return nil }
-        cache.setObject(image, forKey: name as NSString)
+    static func image(style: String, pose: String) -> NSImage? {
+        let key = "\(style)/\(pose)" as NSString
+        if let hit = cache.object(forKey: key) { return hit }
+        guard let image = load(style: style, pose: pose) else { return nil }
+        cache.setObject(image, forKey: key)
         return image
+    }
+
+    private static func load(style: String, pose: String) -> NSImage? {
+        // 正常路径：.app bundle 里的子目录
+        if let url = Bundle.main.url(forResource: pose, withExtension: "png",
+                                     subdirectory: "mascots/\(style)"),
+           let image = NSImage(contentsOf: url) {
+            return image
+        }
+        // 兜底：Tools/ 下的测试工具是裸可执行文件，没有 bundle 结构，
+        // 此时 Bundle.main.resourcePath 就是可执行文件所在目录，直接拼路径。
+        guard let root = Bundle.main.resourcePath else { return nil }
+        return NSImage(contentsOfFile: "\(root)/mascots/\(style)/\(pose).png")
     }
 }
 
@@ -199,12 +216,9 @@ struct MascotCard: View {
 
     private func image(for pose: MascotPose) -> NSImage? {
         let style = prefs.mascotStyle
-        let candidates = [
-            "mascot_\(style)_\(pose.rawValue)",
-            "mascot_\(style)_\(fallbackName(for: pose))"
-        ]
+        let candidates = [pose.rawValue, fallbackName(for: pose)]
         for name in candidates {
-            if let image = MascotAssets.image(name) {
+            if let image = MascotAssets.image(style: style, pose: name) {
                 return image
             }
         }

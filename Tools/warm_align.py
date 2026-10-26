@@ -26,6 +26,7 @@ from PIL import Image
 
 from add_up_frames import render
 from normalize import strip_background
+from paths import frame_raw, mascot_png
 
 # 基准带的相对区间（相对暖色掩码高度，0 = 顶部）
 # 取「脚底那一带」的宽度当尺度基准：
@@ -69,7 +70,7 @@ def main():
     ref_pose = sys.argv[2]
     poses = sys.argv[3:]
 
-    ref = Image.open(f"Resources/mascot_{style}_{ref_pose}.png").convert("RGBA")
+    ref = Image.open(mascot_png(style, ref_pose)).convert("RGBA")
     rm = measure(ref)
     if rm is None:
         print("参照帧找不到暖色躯干，放弃")
@@ -81,7 +82,7 @@ def main():
         if pose == ref_pose:
             continue
         raw = strip_background(
-            Image.open(f"Resources/frames/{style}_{pose}_raw.png").convert("RGBA"))
+            Image.open(frame_raw(style, pose)).convert("RGBA"))
         pm = measure(raw)
         if pm is None:
             print(f"{pose}: 找不到暖色躯干，跳过")
@@ -90,7 +91,7 @@ def main():
         # 竖向按脚底对齐，不按中心：按中心会让矮姿态悬空、高姿态下沉
         cx = pm["cx"] + s / 2 - rm["cx"] * s / rw
         cy = pm["bottom"] + s / 2 - rm["bottom"] * s / rh
-        dst = f"Resources/mascot_{style}_{pose}.png"
+        dst = mascot_png(style, pose)
         render(raw, (cx, cy), s, dst)
 
         out = Image.open(dst).convert("RGBA")

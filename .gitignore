@@ -1,0 +1,29 @@
+# 构建产物
+歇会儿.app/
+*.app/
+
+# AI 原始出图（约 30MB）。成品 mascot_*.png 才入库，
+# 原因见 docs/DECISIONS.md#d-16-素材不入库成品入库
+Resources/frames/
+
+# 早期形象候选图（6MB，定型后无用）
+Resources/candidates/
+
+# 本地备份（含被弃用的素材帧、旧版预览图）
+.backup/
+
+# macOS
+.DS_Store
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 测试工具的编译产物
+Tools/**/bin/

@@ -37,9 +37,9 @@ open 歇会儿.app
 ```
 .
 ├── build.sh                  构建脚本
-├── Sources/                  2231 行，无第三方依赖
+├── Sources/                  2303 行，无第三方依赖
 │   ├── main.swift            NSApplication + .accessory（不占 Dock）
-│   ├── AppDelegate.swift     全部调度：计时、判定、弹窗、菜单、鼠标互动  (786)
+│   ├── AppDelegate.swift     全部调度：计时、判定、弹窗、菜单、鼠标互动  (858)
 │   ├── IdleClock.swift       读系统空闲秒数（零权限）                     (13)
 │   ├── Presence.swift        熄屏/锁屏检测，确凿判定离开（零权限）        (32)
 │   ├── Prefs.swift           UserDefaults 配置 + 免打扰时段判定           (108)
@@ -82,11 +82,12 @@ open 歇会儿.app
 ```
 每秒 tick (AppDelegate.tick)
 │
-├── Presence.isAway（熄屏 / 锁屏）──→ 确凿离开：清零，够阈值则打卡
+├── Presence.isAway（熄屏 / 锁屏）──→ 持续 ≥ 30s 才算离开：清零 + 打卡；< 30s 不动
 │
 ├── IdleClock.seconds ──→ 屏幕亮着时的三档判定
 │        │                  ├─ idle >= awayResetSeconds（兜底 30min）：清零
-│        │                  ├─ idle >= restSeconds（默认 1min）：awayPaused = true，冻结累加
+│        │                  ├─ idle >= restSeconds 且不在会议：awayPaused = true，冻结累加
+│        │                  ├─ idle >= restSeconds 且会议中：照常 += 1，只是不弹窗
 │        │                  └─ 否则：focusSeconds += 1
 │
 ├── focusSeconds >= softMinutes ──→ 该弹了？

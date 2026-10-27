@@ -26,8 +26,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastDraggedAt = Date.distantPast
 
     private var focusSeconds: Double = 0
-    /// 手停了但人还在座位上（idle 介于暂停与离开之间），此时暂停累加、保留进度
+    /// 手停了但人还在座位上（idle 介于冻结阈值与开会判定之间），此时冻结累加、保留进度
     private var awayPaused = false
+
+    /// 离开必须「持续」够久才算数。锁屏两秒、误触熄屏 → 不该抹掉两小时的累计。
+    private static let awayMinSeconds: TimeInterval = 30
+    /// 这一轮离开的起始时刻（熄屏/系统睡眠的瞬间由通知记下，不依赖 tick 会不会被压住）
+    private var awaySince: Date?
+    /// 这一轮离开已经清过零，避免重复打卡
+    private var awayCleared = false
+
     private var panelVisible = false
     private var pauseUntil: Date?
     private var todayCount = 0
@@ -81,19 +89,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startTick()
         watchUnlocks()
 
+        // 熄屏/系统睡眠的**开始**由通知记时间戳，唤醒时再结算。
+        // 不能只靠每秒 tick：屏幕睡着时 App Nap 可能把定时器压慢，
+        // 醒来第一次 tick 时「睡着」这个状态已经消失了。
         NSWorkspace.shared.notificationCenter.addObserver(
-            self, selector: #selector(handleWake),
-            name: NSWorkspace.didWakeNotification, object: nil
-        )
-        // 熄屏/唤醒事件是「确凿离开」的补充：不能只靠每秒 tick 轮询，
-        // 屏幕睡着时 App Nap 可能把定时器压慢，醒来第一次 tick 就已经看不到「睡着」这个状态了。
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self, selector: #selector(handleAway),
+            self, selector: #selector(noteAwayOnset),
             name: NSWorkspace.screensDidSleepNotification, object: nil
         )
         NSWorkspace.shared.notificationCenter.addObserver(
-            self, selector: #selector(handleAway),
+            self, selector: #selector(noteAwayOnset),
+            name: NSWorkspace.willSleepNotification, object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(presenceChanged),
             name: NSWorkspace.screensDidWakeNotification, object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(presenceChanged),
+            name: NSWorkspace.didWakeNotification, object: nil
         )
 
         // 首次启动直接把设置窗口打开，否则用户只看到菜单栏多了个图标，不知道这是什么
@@ -162,15 +175,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tickTimer = t
     }
 
-    /// 系统睡眠唤醒 = 人走了又回来，和熄屏/锁屏同一口径
-    @objc private func handleWake() {
-        handleAway()
+    /// 熄屏 / 系统睡眠的**瞬间**调用。此时 tick 可能被 App Nap 压住，
+    /// 光靠每秒轮询会漏掉「睡着」这个过程，所以由通知把起始时刻记下来。
+    @objc private func noteAwayOnset() {
+        if awaySince == nil { awaySince = Date() }
     }
 
-    /// 确凿离开：熄屏、锁屏、系统唤醒都走这一条，tick 与系统通知共用同一口径。
+    /// tick 每秒一次 + 屏幕/系统唤醒通知都会走到这里。
+    /// 只有离开**持续够久**才清零——短暂熄屏、误触锁屏不该抹掉累计。
+    private func observePresence(away: Bool) {
+        let now = Date()
+        if away {
+            if awaySince == nil { awaySince = now }
+            guard !awayCleared, let since = awaySince,
+                  now.timeIntervalSince(since) >= Self.awayMinSeconds else { return }
+            awayCleared = true
+            resetForAway()
+        } else {
+            // 唤醒通知往往比「睡够 30 秒」到得晚，这里补一次结算
+            let elapsed = awaySince.map { now.timeIntervalSince($0) } ?? 0
+            if !awayCleared, elapsed >= Self.awayMinSeconds {
+                resetForAway()
+            }
+            awaySince = nil
+            awayCleared = false
+        }
+    }
+
+    /// 房间状态可能变了（唤醒、解锁）——重新问一次屏幕
+    @objc private func presenceChanged() {
+        observePresence(away: Presence.isAway)
+    }
+
+    /// 确凿离开：累计清零，够阈值则计一次休息。
     /// 只有「坐够了软提醒阈值之后才离开」才算一次真正的休息——
     /// 随手离开一分钟也能刷天数的话，解锁就失去意义了。
-    @objc private func handleAway() {
+    private func resetForAway() {
         awayPaused = false
         guard focusSeconds > 0 else { return }
         if focusSeconds >= Double(prefs.focusMinutes * 60) {
@@ -183,26 +223,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func tick() {
         resetDayIfNeeded()
-        refreshMeetingState()
 
         let idle = IdleClock.seconds
         // 熄屏 / 锁屏 = 确凿离开。比拿时长猜人可靠得多：屏幕亮着的时候，
         // 看视频、开会听讲、盯着问题想，人都还在座位上。
         let away = Presence.isAway
+        refreshMeetingState(idle: idle, away: away)
+
         let softLimit = Double(prefs.focusMinutes * 60)
         let strongLimit = Double(max(prefs.strongMinutes, prefs.focusMinutes) * 60)
 
-        // 优先级从「确凿」到「猜测」：
-        //   熄屏 / 锁屏            → 真离开，立刻归零
-        //   屏幕亮着但没碰键鼠      → 冻结，人还在座位上
-        //   屏幕永不休眠时的兜底    → 只能退回去用超长时长判
-        if away || idle >= prefs.awayResetSeconds {
-            handleAway()
+        // 到点才清零：离开没够 awayMinSeconds 就回来了，什么都不动
+        observePresence(away: away)
+
+        if away {
+            // 离开中不累加，清零交给 observePresence 按持续时长处理
+            awayPaused = false
         } else if idle >= prefs.restSeconds {
-            awayPaused = true
+            // 手停了。但如果是在开会/视频通话，人就在座位上坐着——
+            // 那正是最容易一坐两小时的场景，冻住等于把它整段漏掉。
+            // 所以照常计时，只是不弹窗（会后补发）。
+            if prefs.meetingAware && meetingBusy {
+                awayPaused = false
+                focusSeconds += 1
+            } else {
+                awayPaused = true
+            }
         } else {
             awayPaused = false
             focusSeconds += 1
+        }
+
+        // 屏幕设成永不休眠时的兜底：拿不到熄屏信号，只能退回去用超长时长判
+        if !away, idle >= prefs.awayResetSeconds {
+            resetForAway()
         }
 
         // 人不在座位上就别弹（不然弹窗自己在底下游走半晌，你回来只看到残留动画）
@@ -230,14 +284,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// 会议检测每次都要查 AVFoundation 和 CoreAudio，每秒都做纯属浪费。
-    /// 只有「快到该提醒了」或「有欠着的提醒等补发」时才轮询，平时一次都不查。
-    private func refreshMeetingState() {
+    /// 只在三种时刻轮询：快到提醒了、有欠着的提醒等补发、手停下来了。
+    /// 第三条是 v0.9.4 加的——「手停了是不是在开会」决定了冻结还是继续计时，
+    /// 不查就分不出来。
+    private func refreshMeetingState(idle: TimeInterval, away: Bool) {
         guard prefs.meetingAware else {
             meetingBusy = false
             return
         }
         let nearLimit = focusSeconds >= Double(prefs.focusMinutes * 60) - 180
-        guard nearLimit || deferredPending || panelVisible else {
+        let handStopped = !away && idle >= prefs.restSeconds
+        guard nearLimit || deferredPending || panelVisible || handStopped else {
             meetingBusy = false
             return
         }
@@ -641,8 +698,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lastStatusTitle = title
         }
 
-        // 「暂离」不是故障，是手停了但人还在座位上——明说出来，省得又以为计时坏了
-        let awayNote = awayPaused ? " · 暂离暂停" : ""
+        // 「暂离」不是故障，是手停了但人还在座位上——明说出来，省得又以为计时坏了。
+        // 会议中数字还在涨，同样要说清楚为什么。
+        let awayNote = awayPaused ? " · 暂离暂停" : (meetingBusy ? " · 会议中照常计时" : "")
         focusMenuItem?.title = "已连续专注 \(minutes) 分钟\(awayNote)（软 \(prefs.focusMinutes) / 强 \(prefs.strongMinutes)）"
         countMenuItem?.title = "今日已提醒 \(todayCount) / \(prefs.dailyCap) 次"
 

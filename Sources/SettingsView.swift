@@ -90,13 +90,13 @@ struct SettingsView: View {
                     get: { Int(prefs.restSeconds / 60) },
                     set: { prefs.restSeconds = Double($0 * 60) }
                 ), in: 1...15) {
-                    labeled("冻结计时", "\(Int(prefs.restSeconds / 60)) 分钟没碰键鼠就暂停累加（不清零）")
+                    labeled("冻结计时", "\(Int(prefs.restSeconds / 60)) 分钟没碰键鼠就暂停累加（不清零；开会/通话除外）")
                 }
                 Stepper(value: $prefs.awayMinutes, in: 10...120, step: 5) {
                     labeled("兜底归零", "熄屏或锁屏立刻归零；这条只在屏幕永不休眠时生效（\(prefs.awayMinutes) 分钟）")
                 }
                 Toggle(isOn: $prefs.meetingAware) {
-                    labeled("开会时暂缓提醒", "摄像头或麦克风占用时不弹，会议结束后补发")
+                    labeled("开会时暂缓提醒", "摄像头或麦克风占用时照常计时，但不弹窗，会议结束后补发")
                 }
             }
 

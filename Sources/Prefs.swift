@@ -23,15 +23,17 @@ final class Prefs: ObservableObject {
 
     var silentSeconds: Double { Double(silentMinutes * 60) }
 
-    /// 兜底归零：屏幕永不休眠时（拿不到熄屏信号），只能靠时长判断离开。
-    /// 平时用不到——熄屏、锁屏会直接触发归零。
-    @Published var awayMinutes: Int {
-        didSet { store.set(awayMinutes, forKey: "awayMinutes") }
+    /// 长静默：手停这么久，本人可能根本不在座位上。
+    /// 计时**照常累加**，只是先不弹窗——真走了的人回来正好需要被提醒。
+    /// 上一版这里叫「兜底归零」，会在看视频、屏幕永不休眠时把真实累计抹掉，
+    /// 用一个猜出来的判据删掉亲眼看见的数据，方向是错的。
+    @Published var longSilentMinutes: Int {
+        didSet { store.set(longSilentMinutes, forKey: "longSilentMinutes") }
     }
 
-    /// 兜底归零的秒数阈值。强制比静默阈值大，防止两个值被调反后互相打架。
-    var awayResetSeconds: Double {
-        max(Double(awayMinutes * 60), silentSeconds + 60)
+    /// 长静默的秒数阈值。强制比静默阈值大，防止两个值被调反后互相打架。
+    var longSilentSeconds: Double {
+        max(Double(longSilentMinutes * 60), silentSeconds + 60)
     }
 
     /// 强提醒阈值：超过这个时长仍未响应，弹窗升级为强提醒
@@ -85,7 +87,9 @@ final class Prefs: ObservableObject {
         focusMinutes = store.object(forKey: "focusMinutes") as? Int ?? 60
         snoozeMinutes = store.object(forKey: "snoozeMinutes") as? Int ?? 5
         silentMinutes = store.object(forKey: "silentMinutes") as? Int ?? 5
-        awayMinutes = store.object(forKey: "awayMinutes") as? Int ?? 30
+        // 老版本的键叫 awayMinutes，语义已经变了（从「归零」改成「不弹」），值直接沿用
+        longSilentMinutes = store.object(forKey: "longSilentMinutes") as? Int
+            ?? store.object(forKey: "awayMinutes") as? Int ?? 30
         strongMinutes = store.object(forKey: "strongMinutes") as? Int ?? 90
         meetingAware = store.object(forKey: "meetingAware") as? Bool ?? true
         dailyCap = store.object(forKey: "dailyCap") as? Int ?? 8

@@ -24,7 +24,7 @@ open 歇会儿.app
 
 `build.sh` 三步：
 
-1. **编译** — `swiftc -O -target arm64-apple-macos13.0` 把 11 个 `Sources/*.swift` 编成单个可执行文件
+1. **编译** — `swiftc -O -target arm64-apple-macos13.0` 把 15 个 `Sources/*.swift` 编成单个可执行文件
    - 纯 SwiftUI + AppKit，**没有任何第三方依赖**，也没有 `Package.swift` / `.xcodeproj`
    - 顺序无关，`swiftc` 直接吃整个文件列表
 2. **组装 bundle** — 拷 `Resources/Info.plist`，以及整个 `Resources/mascots/` 目录进 `.app/Contents/Resources/`（保留按形象分的子目录）
@@ -38,12 +38,14 @@ open 歇会儿.app
 .
 ├── build.sh                  构建脚本（编译 + 组装 bundle + 临时签名）
 ├── package.sh                打 dmg（dist/歇会儿-<版本>.dmg）
-├── Sources/                  2583 行，无第三方依赖
+├── Sources/                  2907 行，无第三方依赖
 │   ├── main.swift            NSApplication + .accessory（不占 Dock）
-│   ├── AppDelegate.swift     全部调度：计时、判定、弹窗、菜单、鼠标互动  (907)
+│   ├── AppDelegate.swift     全部调度：喂判定机、弹窗、菜单、鼠标互动      (924)
+│   ├── PresenceMachine.swift **判定机（纯函数，可测）**                     (215)
 │   ├── IdleClock.swift       读系统空闲秒数（零权限）                     (13)
 │   ├── Presence.swift        熄屏/锁屏检测，确凿判定离开（零权限）        (32)
-│   ├── Prefs.swift           UserDefaults 配置 + 免打扰时段判定           (111)
+│   ├── SessionStore.swift    计时落盘，重启不归零                         (88)
+│   ├── Prefs.swift           UserDefaults 配置 + 免打扰时段判定           (115)
 │   ├── Habits.swift          打卡、连续天数、形象解锁规则                (147)
 │   ├── LaunchAtLogin.swift   LaunchAgent 开机自启                         (69)
 │   ├── MeetingDetector.swift 摄像头/麦克风占用检测                        (54)
@@ -57,6 +59,7 @@ open 歇会儿.app
 │   ├── mascots/{style}/{pose}.png  成品素材（512×512 透明 PNG）
 │   └── frames/{style}/{pose}_raw.png  AI 原始出图（1024×1024，**不入库**）
 ├── Tools/                    开发期脚本与测试工具，不参与发布
+│   ├── run_tests.sh          判定机用例的唯一入口（一条命令 3 秒跑完）
 │   ├── paths.py              素材路径的唯一出处（改目录结构只改这里）
 │   ├── normalize.py          白底抠透明 + 统一裁切
 │   ├── add_up_frames.py      反解裁切窗口 + render
@@ -67,6 +70,7 @@ open 歇会儿.app
 │   ├── group_align.py        按头顶宽度定缩放
 │   ├── make_icon.py          生成 AppIcon.icns（猫头鹰头部特写）
 │   ├── presence_check.swift  熄屏/锁屏三信号探针（换判定依据时先跑它）
+│   ├── PresenceTest/         判定机时间轴用例（改判定逻辑必跑）
 │   ├── AnimTest/             动作引擎行为测试
 │   ├── PokeTest/             验证开窗口拖动的面板上按钮仍能点
 │   ├── GazeTest/             验证视线切换真的换图
@@ -83,22 +87,54 @@ open 歇会儿.app
 ## 4. 运行时架构
 
 ```
-每秒 tick (AppDelegate.tick)
+每秒 tick（AppDelegate.tick）
 │
-├── Presence.isAway（熄屏 / 锁屏）──→ 持续 ≥ 30s 才算离开：清零 + 打卡；< 30s 不动
+├── 采集信号：IdleClock.seconds / Presence.isAway / MeetingDetector.isBusy（限频 5s）
 │
-├── 屏幕亮着 ──→ focusSeconds += 1（手停不停都算，人还在座位上）
-│        └─ idle >= awayResetSeconds（兜底 30min）──→ 清零，仅屏幕永不休眠时生效
+├── PresenceMachine.step(now:input:thresholds:)  ← 纯函数，不读时钟不碰 UI
+│   │
+│   ├── 结算离开（awaySince 由熄屏/系统睡眠通知在事发瞬间写入）
+│   │     ├── 持续 ≥ 30s → 清零；坐够软阈值的话顺手记一次打卡
+│   │     └── < 30s     → 当作没走成，什么都不动
+│   │
+│   ├── 累计 focusSeconds += min(delta, 3)
+│   │     ├── 熄屏 / 锁屏   → 这一秒不算
+│   │     └── 间隔 > 3 秒    → 只认 3 秒（定时器被挂起过，不认识的间隔不补）
+│   │
+│   ├── 静默   idle ≥ 5 分钟  → 只压制升级：不起升级计时、不追鼠标
+│   ├── 长静默 idle ≥ 30 分钟 → **累计照涨**，但先不弹；手一回来立刻补发
+│   │
+│   └── 该弹了？focusSeconds ≥ 软阈值 且 本轮没弹过 且 允许提醒（非暂停/免打扰/已满）
+│         ├── 离开 / 开会 / 长静默 → deferredPending = true（恢复后补发）
+│         └── 否则                 → shouldShowReminder
 │
-├── focusSeconds >= softMinutes ──→ 该弹了？
-│        ├── 离开中 / 会议中（摄像头麦克风占用）？→ deferredPending = true（恢复后补发）
-│        ├── 免打扰 / 暂停 / 今日已满？→ 不弹
-│        └── 否则 showReminder()
-│
-├── 静默（idle >= silentSeconds 且不在会议）──→ 只压制升级：不起升级计时、不追鼠标
-│
-└── 已弹 + focusSeconds >= strongMinutes + 非静默 ──→ upgradeToStrong()
+├── 按事件执行：settledAway → hideReminder()；shouldShowReminder → showReminder()
+├── 落盘：约每 10 秒写一次 ~/Library/Application Support/XieHuiEr/session.json
+└── 菜单刷新（专注时长 / 今日坐多久 / 静默与会议说明）
 ```
+
+**三段逻辑为什么这么分**
+
+| 层 | 谁 | 职责 | 能不能测 |
+|---|---|---|---|
+| 采集 | `IdleClock` / `Presence` / `MeetingDetector` | 只负责把系统信号读成三个值 | 不能（依赖真实机器状态） |
+| 判定 | `PresenceMachine` | 只回答「记多少、清不清、弹不弹」 | **能**，13 组时间轴用例 |
+| 执行 | `AppDelegate` | 弹窗、动画、菜单、落盘 | 不能（要真窗口） |
+
+**这是 v0.11.0 的关键改动**：v0.9.2–v0.9.5 连续四个版本改的都是同一段判定逻辑，每次只能靠「重启 → 盯菜单栏」手测，因为它和 UI、定时器、系统读取缠在一起。抽成纯函数之后，`合盖 8 小时` 就是把 `now` 往前跳 28800 秒，3 秒跑完。
+
+**落盘策略：只续数字，不补间隙**（[D-23](DECISIONS.md#d-23--落盘只续数字不补间隙)）
+
+```
+每 tick：  now - lastPersistAt >= 10s  → 写 { focusSeconds, daySitSeconds, todayCount, savedAt, dayKey }
+启动时：  SessionStore.restore(snapshot)
+            ├── dayKey 不同        → 全部从 0
+            ├── focusSeconds       → 仅当 savedAt 在 10 分钟内才续
+            └── daySitSeconds / todayCount → 同一天就续
+退出时：  applicationWillTerminate → 立刻写一次
+```
+
+**关闭期间流逝的时间永远不加回去**——那段时间没有任何证据，加进去就是编造。
 
 **弹窗的生命周期**
 
@@ -248,7 +284,31 @@ ffmpeg -y -framerate 12.5 -i /tmp/strip_%02d.png -c:v libx264 -pix_fmt yuv420p o
 
 ## 6. 测试工具
 
-项目没有单元测试框架，用一次性可执行文件做行为断言。编译方式和主程序类似：
+**改判定逻辑之前，先跑这条：**
+
+```bash
+./Tools/run_tests.sh     # 全过退出 0，有失败退出 1（约 3 秒）
+```
+
+`Tools/PresenceTest/main.swift` 用时间轴回放 13 组场景，共 46 项断言：
+
+| 场景 | 断言什么 |
+|---|---|
+| 连续工作 60 分钟 | 累计 3600 秒，到点只弹一次 |
+| 锁屏 5 秒 | 不结算、累计不丢 |
+| 锁屏 40 秒 | 结算一次、记打卡、清零；回来后重新满 60 分钟再弹 |
+| 看视频 50 分钟 | 累计一秒不少；长静默期间不弹；手一动立刻补发 |
+| 开会 60 分钟 | 记账不停、不弹；会后补发 |
+| 合盖 8 小时 | 清零 + 记打卡；不把 8 小时算进今日累计 |
+| `delta = 600` | 只认 3 秒（不认识的间隔不补） |
+| 永不休眠 3 小时 | 累计照涨、不弹、挂着待补发 |
+| 手停 20 分钟 | 到点照弹，只是不升级、不标补发 |
+| 暂停 / 免打扰 / 已满 | 不弹，也不该攒成待补发 |
+| 落盘恢复 | 2 分钟前续全部；1 小时前只续今日累计；隔天全不续 |
+| 落盘往返 | 真写一次磁盘再读回来 |
+| 跨零点 | 当日累计归零，这一轮的专注时长不断 |
+
+其余是行为测试，没有框架，用一次性可执行文件：
 
 ```bash
 # 动作引擎（约 35s）
@@ -267,14 +327,17 @@ cp -R Resources/mascots /tmp/ws4/
 
 | 工具 | 断言什么 |
 |---|---|
+| `PresenceTest` | 判定机 13 组时间轴场景（见上） |
 | `AnimTest` | 循环在动（14s 内 ≥15 次切换）、出现伸懒腰/出拳、被戳后能接回循环、reset 后彻底静止、猫头鹰动作库不出拳 |
 | `PokeTest` | `mouseDownCanMoveWindow = true` 时头像 Button 仍能拿到点击 |
 | `GazeTest` | 同姿势切 gaze 画面真的变；非坐姿忽略 gaze |
 | `WindowShot` | non-activating 面板的实际长相（离屏渲染会掩盖降级问题） |
-| `Preview` | 设置页离屏渲染 → `/tmp/settings.png` |
+| `Preview` | 设置页 / 引导页离屏渲染 → `/tmp/settings.png` |
 | `LoginTest` | LaunchAgent plist 写入与路径自愈 |
 
 **为什么必须用真窗口测视觉**：离屏 `NSHostingView` 永远按「窗口已激活」渲染，会把 non-activating 面板的降级外观问题全部掩盖掉——按钮白底白字就是这么漏出去的。
+
+**为什么判定逻辑必须能离屏测**：它每秒跑一次，靠人盯菜单栏只能验「这一刻对不对」，验不了「昨天合盖一夜之后对不对」。判定的全部风险都在长尾场景里，而长尾场景只能靠把时间轴快进。
 
 ## 7. 新增一个形象（Checklist）
 
@@ -321,3 +384,6 @@ xcrun stapler staple 歇会儿.dmg
 - **`NSScreen.main` 不可作为定位依据**，会随窗口焦点在双屏间漂移。用 `NSEvent.mouseLocation` 反查
 - **状态栏 title 每秒无脑赋值会触发重排重绘**，只在文案真的变了才写
 - **会议检测不便宜**，不要每秒查。只在「快到该提醒了」或「有欠着的提醒」时轮询，且限频 5s
+- **不要用「每秒 +1」记账**。定时器会被 App Nap 拉长、被系统睡眠挂起，`+= 1` 会把 8 小时的间隔当成 8 秒。要用真实间隔，并且**封顶**（`min(delta, 3)`）——不认识的间隔不补
+- **只有确凿信号能删数据**。熄屏、锁屏可以清零；任何「手停了多少分钟」的判断都只能改提醒强度，不能碰累计（[D-21](DECISIONS.md#d-21--去掉冻结状态只有离开才清零)、[D-22](DECISIONS.md#d-22--归零兜底改成长静默能删数据的只有确凿信号)）
+- **判定逻辑不进 `AppDelegate`**。只要一段逻辑不读时钟、不碰 UI，就抽成纯结构体放进 `Sources/`，并在 `Tools/PresenceTest` 里补一条时间轴用例

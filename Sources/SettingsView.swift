@@ -89,8 +89,8 @@ struct SettingsView: View {
                 Stepper(value: $prefs.silentMinutes, in: 1...30, step: 1) {
                     labeled("静默判定", "\(prefs.silentMinutes) 分钟没碰键鼠算静默：提醒照弹，但不再升级、不追鼠标")
                 }
-                Stepper(value: $prefs.awayMinutes, in: 10...120, step: 5) {
-                    labeled("兜底归零", "熄屏或锁屏立刻归零；这条只在屏幕永不休眠时生效（\(prefs.awayMinutes) 分钟）")
+                Stepper(value: $prefs.longSilentMinutes, in: 10...120, step: 5) {
+                    labeled("长静默", "\(prefs.longSilentMinutes) 分钟没碰键鼠，人可能不在了：计时照涨，只是先不弹")
                 }
                 Toggle(isOn: $prefs.meetingAware) {
                     labeled("开会时暂缓提醒", "摄像头或麦克风占用时照常计时，但不弹窗，会议结束后补发")

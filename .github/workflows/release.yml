@@ -26,6 +26,10 @@ jobs:
           xcrun --find swiftc
           swiftc --version
 
+      - name: 判定逻辑用例
+        # 纯 Swift，不依赖 UI，CI 里能跑全。改判定逻辑没跑这条就别发版。
+        run: ./Tools/run_tests.sh
+
       - name: 编译
         run: ./build.sh
 

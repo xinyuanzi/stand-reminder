@@ -26,16 +26,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 用户手动拖动过程中的最后移动时间，用来在松手后恢复自动行为
     private var lastDraggedAt = Date.distantPast
 
-    private var focusSeconds: Double = 0
-    /// 静默中：手停了很久、又没有「在开会」的正向证据。照常计时，只是先不打断。
-    private var inSilence = false
-
-    /// 离开必须「持续」够久才算数。锁屏两秒、误触熄屏 → 不该抹掉两小时的累计。
-    private static let awayMinSeconds: TimeInterval = 30
-    /// 这一轮离开的起始时刻（熄屏/系统睡眠的瞬间由通知记下，不依赖 tick 会不会被压住）
-    private var awaySince: Date?
-    /// 这一轮离开已经清过零，避免重复打卡
-    private var awayCleared = false
+    /// 判定机：累计、离开结算、静默、待补发全在它里面，这里只负责把系统信号喂进去、
+    /// 再按它吐出来的事实去弹窗。逻辑抽成纯函数是为了能跑时间轴用例（Tools/run_tests.sh）。
+    private var machine = PresenceMachine()
+    /// 上一条 tick 的时刻，用来算真实间隔——定时器会被 App Nap 拉长，不能假设每秒一次
+    private var lastTickAt = Date()
+    /// 上次落盘时刻
+    private var lastPersistAt = Date.distantPast
+    /// 最近一次读到的空闲秒数，菜单文案用
+    private var lastIdle: TimeInterval = 0
 
     private var panelVisible = false
     private var pauseUntil: Date?
@@ -48,7 +47,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var activeScreen: NSScreen?
 
     private var meetingBusy = false
-    private var deferredPending = false
     private var lastMeetingCheck = Date.distantPast
 
     private var focusMenuItem: NSMenuItem!
@@ -87,6 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem.button?.title = " 0m"
 
         rebuildMenu()
+        restoreSession()
         startTick()
         watchUnlocks()
 
@@ -124,6 +123,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         escalateTimer?.invalidate()
         wanderTimer?.invalidate()
         NSWorkspace.shared.notificationCenter.removeObserver(self)
+        // 退出前落一次盘：下次启动能接着显示，而不是眼睁睁看着归零
+        persist()
     }
 
     // MARK: - 习惯反馈
@@ -179,121 +180,117 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 熄屏 / 系统睡眠的**瞬间**调用。此时 tick 可能被 App Nap 压住，
     /// 光靠每秒轮询会漏掉「睡着」这个过程，所以由通知把起始时刻记下来。
     @objc private func noteAwayOnset() {
-        if awaySince == nil { awaySince = Date() }
+        machine.noteAwayOnset(now: Date().timeIntervalSince1970)
     }
 
-    /// tick 每秒一次 + 屏幕/系统唤醒通知都会走到这里。
-    /// 只有离开**持续够久**才清零——短暂熄屏、误触锁屏不该抹掉累计。
-    private func observePresence(away: Bool) {
-        let now = Date()
-        if away {
-            if awaySince == nil { awaySince = now }
-            guard !awayCleared, let since = awaySince,
-                  now.timeIntervalSince(since) >= Self.awayMinSeconds else { return }
-            awayCleared = true
-            resetForAway()
-        } else {
-            // 唤醒通知往往比「睡够 30 秒」到得晚，这里补一次结算
-            let elapsed = awaySince.map { now.timeIntervalSince($0) } ?? 0
-            if !awayCleared, elapsed >= Self.awayMinSeconds {
-                resetForAway()
-            }
-            awaySince = nil
-            awayCleared = false
-        }
-    }
-
-    /// 房间状态可能变了（唤醒、解锁）——重新问一次屏幕
+    /// 房间状态可能变了（唤醒、解锁）——立刻走一次心跳完成结算，
+    /// 不用等下一秒的定时器（它醒来时可能还被压着）。
     @objc private func presenceChanged() {
-        observePresence(away: Presence.isAway)
+        tick()
     }
 
-    /// 确凿离开：累计清零，够阈值则计一次休息。
-    /// 只有「坐够了软提醒阈值之后才离开」才算一次真正的休息——
-    /// 随手离开一分钟也能刷天数的话，解锁就失去意义了。
-    private func resetForAway() {
-        inSilence = false
-        guard focusSeconds > 0 else { return }
-        if focusSeconds >= Double(prefs.focusMinutes * 60) {
-            recordHabit()
-        }
-        focusSeconds = 0
-        hideReminder()
-        updateStatus()
+    private var thresholds: PresenceThresholds {
+        PresenceThresholds(focusMinutes: prefs.focusMinutes,
+                           strongMinutes: prefs.strongMinutes,
+                           silentMinutes: prefs.silentMinutes,
+                           longSilentMinutes: prefs.longSilentMinutes)
     }
 
     @objc private func tick() {
         resetDayIfNeeded()
 
+        let now = Date()
+        // 真实间隔，不是「1 秒」。App Nap 会把定时器压成几秒一次，
+        // 系统睡眠后第一次 tick 的间隔可能是几小时——这两种都不能按 1 秒记账。
+        let delta = now.timeIntervalSince(lastTickAt)
+        lastTickAt = now
+
         let idle = IdleClock.seconds
+        lastIdle = idle
         // 熄屏 / 锁屏 = 确凿离开。比拿时长猜人可靠得多。
         let away = Presence.isAway
         refreshMeetingState(idle: idle, away: away)
 
-        let softLimit = Double(prefs.focusMinutes * 60)
-        let strongLimit = Double(max(prefs.strongMinutes, prefs.focusMinutes) * 60)
-        let inMeeting = prefs.meetingAware && meetingBusy
+        let event = machine.step(
+            now: now.timeIntervalSince1970,
+            input: PresenceInput(
+                idle: idle,
+                away: away,
+                inMeeting: prefs.meetingAware && meetingBusy,
+                delta: delta,
+                panelVisible: panelVisible,
+                // 暂停 / 免打扰 / 今日已满只拦「弹不弹」，不拦记账
+                canRemind: !isPaused() && !prefs.inQuietHours() && todayCount < prefs.dailyCap
+            ),
+            thresholds: thresholds
+        )
 
-        // 到点才清零：离开没够 awayMinSeconds 就回来了，什么都不动
-        observePresence(away: away)
-
-        // 屏幕亮着就一直记账。
-        // 冻结是上一版的错误：手停三分钟跟旁边人说句话、读文档停下来想，
-        // 人明明还在座位上，冻住等于把这段整段漏掉——而屏幕没熄这件事本身
-        // 就是系统在说「人还在」（它按 10 分钟无输入才熄屏）。
-        if !away {
-            focusSeconds += 1
+        if event.settledAway {
+            if event.shouldRecordHabit { recordHabit() }
+            hideReminder()
         }
 
-        // 屏幕设成永不休眠时的兜底：拿不到熄屏信号，只能退回去用超长时长判
-        if !away, idle >= prefs.awayResetSeconds {
-            resetForAway()
-        }
-
-        // 静默 = 手停了很久，但**没有**任何「在开会」的正向证据。
-        // 不拿它当「人走了」——那正是上一版冻结的错误。它只当作**克制**的理由：
-        // 提醒照弹，但不升级、不追鼠标。看视频、线下开会时别被追着跑。
-        inSilence = !away && !inMeeting && idle >= prefs.silentSeconds
-        // 只有确凿证据（熄屏/锁屏、摄像头麦克风占用）才完全压住弹窗，其余照常提醒。
-        let holdBack = away || inMeeting
-
-        if !panelVisible, focusSeconds >= softLimit,
-           !isPaused(), !prefs.inQuietHours(), todayCount < prefs.dailyCap {
-            if holdBack {
-                // 离开 / 开会：记账不停，只是不打断，恢复后补发
-                deferredPending = true
-            } else {
-                let wasDeferred = deferredPending
-                deferredPending = false
-                showReminder(deferred: wasDeferred)
-            }
+        if event.shouldShowReminder {
+            showReminder(deferred: event.reminderIsDeferred)
         }
 
         // 静默结束（手回来了）补上克制期间欠下的升级计时
-        if panelVisible, !inSilence, escalateTimer == nil,
+        if panelVisible, event.silenceEnded, escalateTimer == nil,
            model.urgency == .soft, model.stage == .sitting {
             startEscalation()
         }
 
-        if panelVisible, model.urgency == .soft, focusSeconds >= strongLimit, !inSilence {
+        if panelVisible, model.urgency == .soft, !machine.inSilence,
+           machine.focusSeconds >= thresholds.strong {
             upgradeToStrong()
         }
 
+        persistIfNeeded(now)
         updateStatus()
     }
 
+    // MARK: - 落盘
+
+    /// 大约每 10 秒写一次（1 秒粒度的定时器，实际落在 11 秒左右）。
+    /// 崩溃最多丢十几秒，比「重启从 0 开始」好太多。
+    private func persistIfNeeded(_ now: Date) {
+        guard now.timeIntervalSince(lastPersistAt) >= 10 else { return }
+        persist(at: now)
+    }
+
+    private func persist(at now: Date = Date()) {
+        SessionStore.save(SessionStore.Snapshot(
+            focusSeconds: machine.focusSeconds,
+            daySitSeconds: machine.daySitSeconds,
+            todayCount: todayCount
+        ))
+        // 记基准时用 tick 的时刻，不能用 Date()——否则每次都会晚几毫秒，
+        // 攒够一圈实际间隔就变成 12 秒了
+        lastPersistAt = now
+    }
+
+    /// 启动时续上。**只拿回数字，不补间隙**——关闭期间发生了什么我们一概不知，
+    /// 把那段算进去就是编造，而编造出来的分钟数正是让人不再相信这个工具的东西。
+    private func restoreSession() {
+        guard let snapshot = SessionStore.load() else { return }
+        let restored = SessionStore.restore(snapshot)
+        todayCount = restored.todayCount
+        machine.adopt(focusSeconds: restored.focus, daySitSeconds: restored.daySit)
+        if restored.focus > 0 {
+            flashStatus("续上 \(Int(restored.focus / 60)) 分钟", seconds: 4)
+        }
+    }
+
     /// 会议检测每次都要查 AVFoundation 和 CoreAudio，每秒都做纯属浪费。
-    /// 只在三种时刻轮询：快到提醒了、有欠着的提醒等补发、手停下来了。
-    /// 第三条是 v0.9.4 加的——「手停了是不是在开会」决定了冻结还是继续计时，
-    /// 不查就分不出来。
+    /// 只在四种时刻轮询：快到提醒了、有欠着的提醒等补发、卡片已经弹着、手停下来了。
     private func refreshMeetingState(idle: TimeInterval, away: Bool) {
         guard prefs.meetingAware else {
             meetingBusy = false
             return
         }
-        let nearLimit = focusSeconds >= Double(prefs.focusMinutes * 60) - 180
+        let nearLimit = machine.focusSeconds >= thresholds.soft - 180
         let handStopped = !away && idle >= prefs.silentSeconds
-        guard nearLimit || deferredPending || panelVisible || handStopped else {
+        guard nearLimit || machine.deferredPending || panelVisible || handStopped else {
             meetingBusy = false
             return
         }
@@ -310,7 +307,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 手动预览不该占掉今天 8 次的名额
         if !manual { todayCount += 1 }
 
-        let minutes = max(prefs.focusMinutes, Int(focusSeconds / 60))
+        let minutes = max(prefs.focusMinutes, Int(machine.focusSeconds / 60))
         model.minutes = minutes
         model.stage = .sitting
         model.urgency = .soft
@@ -362,14 +359,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // 静默时不起升级计时：卡片安静待着，不追鼠标也不转暖色。
         // 手一回来再补上（见 tick 里的补装逻辑）。
-        if !inSilence { startEscalation() }
+        if !machine.inSilence { startEscalation() }
         startGazeTracking()
         updateStatus()
     }
 
     private func upgradeToStrong() {
         model.urgency = .strong
-        model.minutes = Int(focusSeconds / 60)
+        model.minutes = Int(machine.focusSeconds / 60)
         panel?.level = .screenSaver
         NSSound(named: NSSound.Name("Glass"))?.play()
         // 强提醒才黏人：改成贴着光标跑，比游走更有存在感
@@ -418,7 +415,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         stopWandering()
         stopChasing()
         stopGazeTracking()
-        deferredPending = false
+        machine.clearDeferred()
         model.pokedLine = nil
         pokeTimes.removeAll()
 
@@ -449,20 +446,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func didRest() {
         // 和 tick() 里的判定保持同一口径：没坐够阈值就点按钮，不算打卡。
         // 否则「立即提醒我一次」这种测试入口也能刷天数。
-        if focusSeconds >= Double(prefs.focusMinutes * 60) {
+        if machine.focusSeconds >= thresholds.soft {
             recordHabit()
         }
-        focusSeconds = 0
-        deferredPending = false
+        machine.reset()
         hideReminder()
+        persist()
     }
 
     private func didSnooze() {
         let limit = Double(prefs.focusMinutes * 60)
         let back = Double(prefs.snoozeMinutes * 60)
-        focusSeconds = max(0, limit - back)
-        deferredPending = false
+        machine.rewind(to: limit - back)
         hideReminder()
+        persist()
     }
 
     // MARK: - 动作编排：哈欠 -> 伸懒腰 -> 打两拳 -> 歇一下，循环播放
@@ -484,7 +481,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func escalate() {
         guard panelVisible else { return }
         model.stage = .stretching
-        model.minutes = Int(focusSeconds / 60)
+        model.minutes = Int(machine.focusSeconds / 60)
 
         // 动作循环从弹窗出现起就一直跑，升级只改视觉强度，不打断编排
         startWandering()
@@ -682,7 +679,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: - 菜单
 
     private func updateStatus() {
-        let minutes = Int(focusSeconds / 60)
+        let minutes = Int(machine.focusSeconds / 60)
 
         let normalTitle: String
         if isPaused() {
@@ -701,12 +698,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             lastStatusTitle = title
         }
 
-        // 静默不是故障，是手停了但人还在座位上——明说出来，省得又以为计时坏了。
-        // 会议中数字还在涨，同样要说清楚为什么。
-        let awayNote = inSilence ? " · 静默中（提醒不升级）"
-            : (meetingBusy ? " · 会议中照常计时" : "")
+        // 数字还在涨的时候，必须说清楚为什么——不然用户只会以为计时坏了。
+        let awayNote: String
+        if machine.inLongSilence {
+            awayNote = " · 手停 \(Int(lastIdle / 60)) 分钟，先不弹"
+        } else if machine.inSilence {
+            awayNote = " · 静默中（提醒不升级）"
+        } else if meetingBusy {
+            awayNote = " · 会议中照常计时"
+        } else {
+            awayNote = ""
+        }
         focusMenuItem?.title = "已连续专注 \(minutes) 分钟\(awayNote)（软 \(prefs.focusMinutes) / 强 \(prefs.strongMinutes)）"
-        countMenuItem?.title = "今日已提醒 \(todayCount) / \(prefs.dailyCap) 次"
+        // 今日累计不受归零影响，是「今天一共坐了多久」——比单看这一轮更真实
+        countMenuItem?.title = "今日坐 \(durationText(machine.daySitSeconds))"
+            + " · 已提醒 \(todayCount) / \(prefs.dailyCap) 次"
 
         let habits = Habits.shared
         streakMenuItem?.title = habits.progressLine()
@@ -714,6 +720,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         pauseMenuItem?.title = isPaused() ? "恢复计时" : "暂停 1 小时"
         unlockAllMenuItem?.state = prefs.debugUnlockAll ? .on : .off
+    }
+
+    private func durationText(_ seconds: Double) -> String {
+        let total = Int(seconds / 60)
+        guard total >= 60 else { return "\(total) 分钟" }
+        let h = total / 60
+        let m = total % 60
+        return m == 0 ? "\(h) 小时" : "\(h) 小时 \(m) 分"
     }
 
     private func isPaused() -> Bool {
@@ -727,6 +741,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !Calendar.current.isDate(countDay, inSameDayAs: Date()) {
             countDay = Date()
             todayCount = 0
+            // 跨零点只清「今日累计」，这一轮的专注时长不该断——凌晨加班也是加班
+            machine.rolloverDay()
             // 跨零点时把「今天是否已打卡」一起对齐，否则昨天的打卡状态会留在今天
             Habits.shared.refreshForNewDay()
         }
@@ -810,8 +826,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func resetTimer() {
-        focusSeconds = 0
+        machine.reset()
         hideReminder()
+        persist()
         updateStatus()
     }
 

@@ -6,6 +6,30 @@
 
 ---
 
+## v0.11.0 · 2026-10-27
+
+「让计数可信」这一轮终于落地（原计划 v0.9.6，被 v0.10.0 的发布准备插了个队）。四件事都在回答同一个问题：**凭什么信这个数字**。
+
+### 新增
+
+- **计时落盘** `SessionStore`。约每 10 秒 + 退出时写 `~/Library/Application Support/XieHuiEr/session.json`，重启不再归零。续的只是快照里的数字，**关闭期间的时间一秒都不补**——那段时间没有任何证据，加进去就是编造。详见 [D-23](docs/DECISIONS.md#d-23--落盘只续数字不补间隙)
+- **判定机 `PresenceMachine`**。把 `(idle, away, inMeeting, delta, panelVisible, canRemind) → (累计 / 结算 / 静默 / 补发)` 抽成纯结构体，不读时钟、不碰 AppKit；配 13 组时间轴用例、46 项断言，`./Tools/run_tests.sh` 一条命令 3 秒跑完。详见 [D-24](docs/DECISIONS.md#d-24--判定逻辑抽成纯函数用时间轴用例兜住)
+- 菜单第二行改成「**今日坐** 4 小时 20 分 · 已提醒 3 / 8 次」。今日累计不受单轮归零影响，跨零点才归零
+- 今日提醒次数一并落盘：重启不再白送 8 次
+
+### 修复
+
+- **看视频超过 30 分钟会被无声清零**。上一版留了条 `awayResetSeconds` 兜底：屏幕亮着、手停 30 分钟就清零。可播放器会持有 display sleep assertion，屏幕根本不会熄——看一集 50 分钟的剧，累计会在第 30 分钟被抹掉，**而这正是最该被记录的场景**。改成「长静默」：照常记账，只是先不弹窗，手一回来立刻补发。详见 [D-22](docs/DECISIONS.md#d-22--归零兜底改成长静默能删数据的只有确凿信号)
+- **`focusSeconds += 1` 记的不是时间**。定时器被 App Nap 拉长、被系统睡眠挂起时，8 小时的间隔会被当成 8 秒记进去。改用真实 `delta` 并封顶 3 秒：不认识的间隔不补
+
+### 变更
+
+- 设置项「兜底归零」→「长静默」，键 `awayMinutes` → `longSilentMinutes`（读到旧键自动沿用，用户无感）
+- 菜单的静默提示分两档：`· 静默中（提醒不升级）` / `· 手停 32 分钟，先不弹`
+- `Prefs.awayResetSeconds` 删除；`AppDelegate` 里 `focusSeconds` / `inSilence` / `deferredPending` / `awaySince` / `awayCleared` 五个散落的状态全部收进判定机
+
+---
+
 ## v0.10.0 · 2026-10-27
 
 发布准备。这一版没有动判定逻辑，全是「让陌生人装得上、看得懂」的事。

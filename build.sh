@@ -18,6 +18,8 @@ swiftc -O \
     Sources/AppDelegate.swift \
     Sources/IdleClock.swift \
     Sources/Presence.swift \
+    Sources/PresenceMachine.swift \
+    Sources/SessionStore.swift \
     Sources/Prefs.swift \
     Sources/Habits.swift \
     Sources/LaunchAtLogin.swift \

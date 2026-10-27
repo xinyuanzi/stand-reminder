@@ -45,24 +45,31 @@ enum MascotRoutine {
         (.sit, 0.55),
         (.yawn1, 0.24), (.yawn2, 0.55), (.yawn1, 0.24), (.sit, 0.50),
         (.scratch, 0.42), (.sit, 0.34),
-        (.blink, 0.13), (.sit, 0.30)
+        (.blink, 0.13), 
+        // 收得短一点：起身本来就是个快动作，坐太久反而显得它不情愿。
+        // 从这一帧到下一幕的 stand 是硬切，中间没有起身过渡帧可插
+        // （素材缺 standup），所以让「还没坐稳就站起来」比「坐定再站」更不突兀。
+        (.sit, 0.20)
     ]
 
     /// 第二幕 · 卖力
     static let act2: [(MascotPose, TimeInterval)] = [
-        (.stand, 0.46),
+        (.stand, 0.34),
         // 伸到一半先停一下再伸完，比一次拉满像活的
         (.up, 0.62), (.stand, 0.26),
         (.up, 0.72), (.stand, 0.30),
-        // 三拳，中间那下收势更长，像歇了口气又补一拳
-        (.punch1, 0.15), (.stand, 0.11),
-        (.punch2, 0.15), (.stand, 0.38),
-        (.punch1, 0.14), (.stand, 0.55)
+        // 连打三拳，中间不回站姿。
+        // 原来每拳之间都插 0.11 秒的 stand，视觉上等于「挥一下、站好、
+        // 再挥一下」，像在原地招手而不是出拳。连起来才是一口气的连击。
+        (.punch1, 0.15), (.punch2, 0.13), (.punch1, 0.14),
+        // 收势拉长，像打完喘了口气
+        (.stand, 0.55)
     ]
 
     /// 第三幕 · 摆烂
     static let act3: [(MascotPose, TimeInterval)] = [
-        (.sitdown, 0.30), (.sit, 0.55),
+        // 坐下也是快动作。0.30 秒太从容，反而让人看清椅子是突然出现的
+        (.sitdown, 0.24), (.sit, 0.55),
         (.scratch, 0.48), (.sit, 0.40),
         (.blink, 0.13), (.sit, 1.10)
     ]
@@ -73,7 +80,7 @@ enum MascotRoutine {
     /// 急脾气：不铺垫，下椅子就是两拳
     static let impatient: [(MascotPose, TimeInterval)] =
         [(MascotPose.sit, 0.30)] + act2
-        + [(.sitdown, 0.30), (.sit, 0.45), (.blink, 0.13), (.sit, 0.60)]
+        + [(.sitdown, 0.24), (.sit, 0.45), (.blink, 0.13), (.sit, 0.60)]
 
     /// 困得不想动：只打哈欠，然后眯着
     static let sleepy: [(MascotPose, TimeInterval)] = [
@@ -90,7 +97,7 @@ enum MascotRoutine {
         (.stand, 0.42),
         (.up, 1.00), (.stand, 0.26),
         (.up, 0.60), (.stand, 0.40),
-        (.sitdown, 0.30), (.sit, 0.60),
+        (.sitdown, 0.24), (.sit, 0.60),
         (.blink, 0.13), (.sit, 0.55)
     ]
 
@@ -127,7 +134,7 @@ enum MascotRoutine {
         /// 急脾气：不铺垫，站起来就扇
         static let impatient: [(MascotPose, TimeInterval)] =
             [(.sit, 0.30)] + act2
-            + [(.sitdown, 0.30), (.sit, 0.45), (.blink, 0.13), (.sit, 0.60)]
+            + [(.sitdown, 0.24), (.sit, 0.45), (.blink, 0.13), (.sit, 0.60)]
 
         /// 困得不想动：猫头鹰熬夜是专业的，打哈欠这一段天然合身，直接沿用
         static let sleepy: [(MascotPose, TimeInterval)] = MascotRoutine.sleepy
@@ -138,7 +145,7 @@ enum MascotRoutine {
             (.stand, 0.42),
             (.up, 1.00), (.stand, 0.26),
             (.up, 0.60), (.stand, 0.40),
-            (.sitdown, 0.30), (.sit, 0.60),
+            (.sitdown, 0.24), (.sit, 0.60),
             (.blink, 0.13), (.sit, 0.55)
         ]
 

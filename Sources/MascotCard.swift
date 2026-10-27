@@ -246,6 +246,22 @@ struct MascotCard: View {
                                 .resizable()
                                 .scaledToFit()
                                 .frame(width: 112, height: 112)
+                                // 换图不吃动画，硬切。
+                                //
+                                // 2D 逐帧本来就该硬切：AI 生成的多帧不是真正的中间帧，
+                                // 两张姿态图叠在一起会被看成「两只动物闪一下」，
+                                // 比硬切难看得多。这里用 `.animation(nil, value:)`
+                                // 而不是 `.transaction { $0.animation = nil }`——
+                                // 后者会连待机层的呼吸/摆动一起吃掉，实测抓帧
+                                // 呼吸位移直接变成 0。
+                                .animation(nil, value: displayPose)
+                                // 注：不要给 Image 加 `.id(displayPose)` 来「强制重建」。
+                                // 试过，它确实能让每次换帧都重建视图，但重建会把
+                                // 外层的 repeatForever 动画一起掐断 —— 实测切成站姿后
+                                // 呼吸位移恒为 0，直到下一次重建才恢复，观感就是
+                                // 「站起来之后变成一张静止图片」。残影要在窗口层解决
+                                // （见 AppDelegate 里的 layerContentsRedrawPolicy），
+                                // 不能靠重建视图。
                         }
                     }
                     // 不做交叉淡入。AI 生成的多帧不是真正的中间帧，
@@ -258,7 +274,7 @@ struct MascotCard: View {
                     // 平移在整数像素下只是搬纹理，零重采样，图永远 1:1 清晰。
                     // 幅度取整数，@2x 下正好落在物理像素上。
                     .offset(x: sway ? 1 : -1, y: breathe ? -2 : 0)
-                    .scaleEffect(mascotZoom)
+                    .modifier(ZoomIfNeeded(zoom: mascotZoom))
                     .offset(mascotOffset)
                 }
                 .frame(width: 126, height: 126)
@@ -355,6 +371,24 @@ struct MascotCard: View {
             }
         } else {
             withAnimation(.easeOut(duration: 0.12)) { pulse = false }
+        }
+    }
+}
+
+/// 只在真要放大时才叠一层变换。
+///
+/// `.scaleEffect(1)` 看着是空操作，但 SwiftUI 仍会为它创建变换层 ——
+/// 在 isOpaque = false 的透明面板上，多一层合成就多一个可能残留旧内容
+/// 的环节。橘猫（a）和柴犬（e）的 zoom 都是 1.0，走无变换分支。
+private struct ZoomIfNeeded: ViewModifier {
+    let zoom: CGFloat
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if zoom == 1 {
+            content
+        } else {
+            content.scaleEffect(zoom)
         }
     }
 }

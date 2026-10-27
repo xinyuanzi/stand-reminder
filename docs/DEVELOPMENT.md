@@ -40,9 +40,9 @@ open 歇会儿.app
 ├── package.sh                打 dmg（dist/歇会儿-<版本>.dmg）
 ├── packaging/
 │   └── 先看我.html            随 dmg 分发的首次打开说明（未签名分发的主力）
-├── Sources/                  3032 行，无第三方依赖
+├── Sources/                  3079 行，无第三方依赖
 │   ├── main.swift            NSApplication + .accessory（不占 Dock）
-│   ├── AppDelegate.swift     全部调度：喂判定机、弹窗、菜单、鼠标互动      (990)
+│   ├── AppDelegate.swift     全部调度：喂判定机、弹窗、菜单、鼠标互动      (996)
 │   ├── PresenceMachine.swift **判定机（纯函数，可测）**                     (217)
 │   ├── Wander.swift          游走步进、边界反弹、移动来源判定（纯函数）    (47)
 │   ├── IdleClock.swift       读系统空闲秒数（零权限）                     (13)
@@ -53,8 +53,8 @@ open 歇会儿.app
 │   ├── LaunchAtLogin.swift   LaunchAgent 开机自启                         (69)
 │   ├── MeetingDetector.swift 摄像头/麦克风占用检测                        (54)
 │   ├── ReminderPanel.swift   NSPanel 子类，禁止成为 key/main 窗口        (7)
-│   ├── MascotAnimator.swift  姿态枚举、动作库、三层动画引擎              (371)
-│   ├── MascotCard.swift      SwiftUI 卡片视图 + 表情层覆盖               (405)
+│   ├── MascotAnimator.swift  姿态枚举、动作库、三层动画引擎              (378)
+│   ├── MascotCard.swift      SwiftUI 卡片视图 + 表情层覆盖               (439)
 │   ├── SettingsView.swift    SwiftUI 设置页「Form」                      (235)
 │   └── OnboardingView.swift  三屏首次启动引导（可离屏预览）              (231)
 ├── Resources/
@@ -507,3 +507,7 @@ lipo -create -output 歇会儿 build/arm64 build/x86_64
 - **一次性 `Timer` 触发后不会自己清空引用**。`Timer(timeInterval:target:selector:repeats: false)` 跑完，属性里还挂着那个已失效的对象，所有 `timer == nil` 的判断都会失真。要么在回调开头置 nil，要么用 `invalidate()` 明确收尾
 - **`NSWindow.didMoveNotification` 分不清是程序挪的还是用户拖的**。游走 30fps，每帧 `setFrameOrigin` 都会发一次这个通知，通知里又不带来源字段（`Tools/MoveNotifyTest` 验证）。判别只能靠自己记的期望坐标（`Wander.isAutoMove` + `autoMovedTo`），**不要用 `NSEvent.pressedMouseButtons` 猜**——「按着鼠标」不等于「在拖窗口」。v0.12.2 就是栽在这上面：用户按着鼠标，游走第一帧被判成拖拽，停掉之后软提醒阶段没有任何恢复路径
 - **自动行为要有兜底重启**。停游走的路径有三条（拖走、躲闪、升强提醒），将来还可能加。让每条路径自己记得善后，漏一个就是「卡片定住」。`tick()` 里每秒问一次「现在该不该动」，退出条件写全（`panelVisible` / `urgency` / `stage` / `wanderEnabled` / 两个 timer 都为 nil / 过了手动干预静默期），成本一次判断
+- **透明面板上的重影，八成是漏擦不是淡入**。`isOpaque = false` 时 SwiftUI 判断不出「这块区域从有内容变成没内容」，擦除会被跳过。给 `NSHostingView` 设 `layerContentsRedrawPolicy = .onSetNeedsDisplay`（**不能设 `.crossfade`**）。要确认是漏擦还是淡入，用像素统计当探针抓帧看切换点有没有中间值，别靠肉眼看截图（[D-27](DECISIONS.md#d-27--重影是透明窗口漏擦不是交叉淡入而且不能用重建视图来修)）
+- **别用 `.id()` 强制重建来修渲染问题**。它会把外层 `repeatForever` 的常驻动画一起掐断——实测切姿态后呼吸位移恒为 0，观感变成「站起来之后是一张静止图片」。同理 `.transaction { $0.animation = nil }` 会吃掉外层的 `offset` 动画。要「只对这个值禁用动画」，用 `.animation(nil, value:)`
+- **`.scaleEffect(1)` 不是空操作**，SwiftUI 仍会为它创建变换层。`ZoomIfNeeded` 在值为 1 时直接返回内容
+- **动作序列的节奏就是观感本身**。同一批姿态，插不插过渡帧、停顿多长，决定它是「连击」还是「原地招手」。改动序列后跑 `Tools/AnimTest`，里面钉了「出拳中间不回站姿」「第一幕收尾 ≤0.25s」这类规则

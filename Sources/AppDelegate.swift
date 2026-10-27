@@ -356,6 +356,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             )
             let h = NSHostingView(rootView: view)
             hosting = h
+            // 内容一变就重绘。默认策略（.duringViewResize）只在视图尺寸变化时
+            // 重画，内容「从有到无」的那部分会被漏掉 —— 在 isOpaque = false 的
+            // 透明面板上，表现就是上一帧留在原地：用户报的「重影」里，
+            // 那把没人坐的椅子就是这么来的。
+            // 注意别改成 .crossfade，那是主动做交叉淡入，正好是重影的成因。
+            h.layerContentsRedrawPolicy = .onSetNeedsDisplay
             p.contentView = h
             h.layoutSubtreeIfNeeded()
             var size = h.fittingSize

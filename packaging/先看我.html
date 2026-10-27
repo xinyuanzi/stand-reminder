@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>歇会儿 · 第一次打开</title>
+<style>
+  :root {
+    --ink: #1c1b1a;
+    --sub: #5d5a55;
+    --line: #e6e1d8;
+    --warm: #faf3e8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 48px 24px 64px;
+    background: #fdfcfa;
+    color: var(--ink);
+    font: 15px/1.75 -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 620px; margin: 0 auto; }
+  h1 { margin: 0 0 4px; font-size: 25px; letter-spacing: -0.2px; }
+  .lede { margin: 0 0 32px; color: var(--sub); font-size: 14px; }
+  h2 {
+    margin: 34px 0 12px;
+    font-size: 16px;
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+  }
+  h2 .n {
+    flex: none;
+    width: 21px; height: 21px;
+    border-radius: 50%;
+    background: #2c67d8;
+    color: #fff;
+    font-size: 12px;
+    line-height: 21px;
+    text-align: center;
+    font-weight: 600;
+  }
+  ol, ul { margin: 0; padding-left: 21px; }
+  li { margin: 5px 0; }
+  kbd {
+    display: inline-block;
+    padding: 1px 7px;
+    border: 1px solid #d5cfc4;
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    background: #fff;
+    font: 13px/1.6 -apple-system, sans-serif;
+    white-space: nowrap;
+  }
+  code {
+    font: 13px/1.6 "SF Mono", Menlo, monospace;
+    background: #f2eee6;
+    padding: 2px 6px;
+    border-radius: 4px;
+    word-break: break-all;
+  }
+  .cmd {
+    margin: 12px 0;
+    padding: 13px 15px;
+    background: #29261f;
+    color: #f4efe5;
+    border-radius: 9px;
+    font: 13px/1.65 "SF Mono", Menlo, monospace;
+    overflow-x: auto;
+    white-space: pre;
+    -webkit-user-select: all;
+    user-select: all;
+  }
+  .box {
+    margin: 18px 0;
+    padding: 14px 16px;
+    border-radius: 10px;
+    font-size: 14px;
+  }
+  .box p { margin: 0; }
+  .box p + p { margin-top: 8px; }
+  .box.warn { background: #fdf3e6; border: 1px solid #f0d9b5; }
+  .box.info { background: var(--warm); border: 1px solid #ece2d0; }
+  .muted { color: var(--sub); font-size: 13.5px; }
+  hr { margin: 40px 0 26px; border: 0; border-top: 1px solid var(--line); }
+  a { color: #2c67d8; }
+</style>
+</head>
+<body>
+<main>
+
+  <h1>歇会儿 · 第一次打开</h1>
+  <p class="lede">一个提醒你起来走走的菜单栏小工具。下面这一步只需要做一次。</p>
+
+  <div class="box info" style="margin-top:0">
+    <p><strong>先确认机器：</strong>需要 macOS 13 或更新、<strong>Apple Silicon（M 系列）</strong>。Intel Mac 打不开这个包 —— 不是签名问题，是编译时只出了 arm64 版本。想用可以自己拉源码改 target 编译，作者没在 Intel 机器上测过。</p>
+  </div>
+
+  <div class="box warn">
+    <p><strong>为什么会被拦：</strong>这个 app 没有买 Apple 开发者签名（¥688/年，作者自己掏）。没有签名的 app 从网上下载后，macOS 会先拦一下。</p>
+    <p>不是病毒，也没有联网。要不要放行由你决定 —— 源码全部公开，也可以自己编译。</p>
+  </div>
+
+  <h2><span class="n">1</span>装进「应用程序」</h2>
+  <ol>
+    <li>把左边的 <strong>歇会儿</strong> 拖到右边的 <strong>Applications</strong> 文件夹</li>
+    <li>在启动台或「应用程序」里找到它</li>
+  </ol>
+
+  <h2><span class="n">2</span>第一次这样打开</h2>
+  <ol>
+    <li>在「应用程序」里<strong>按住 Control 点它</strong>（或者点右键）</li>
+    <li>菜单里选「<strong>打开</strong>」</li>
+    <li>弹窗里还有一个「打开」按钮，再点一次</li>
+  </ol>
+  <p class="muted">只有第一次需要这样。之后双击、开机自启都正常。</p>
+
+  <div class="box info">
+    <p><strong>第二步点「打开」之后没反应？</strong>去「系统设置 → 隐私与安全性」，页面下方会有一行「已阻止打开歇会儿」，点旁边的「仍要打开」。</p>
+  </div>
+
+  <h2><span class="n">3</span>还是不行的话</h2>
+  <p>打开「终端」（在「应用程序 → 实用工具」里），粘贴这一行回车：</p>
+  <div class="cmd">xattr -dr com.apple.quarantine /Applications/歇会儿.app</div>
+  <p class="muted">这条命令只做一件事：清掉「从网络下载」的隔离标记。不解压、不改 app 内容、不需要密码。</p>
+
+  <hr>
+
+  <h2 style="margin-top:0"><span class="n">?</span>不想放行别人打包的 app</h2>
+  <p>完全合理。去项目主页 clone 源码，在根目录执行 <code>./build.sh</code>，10 秒编译出你自己的 <code>歇会儿.app</code>，全程没有网络操作。需要 Xcode Command Line Tools。</p>
+
+  <hr>
+
+  <h2 style="margin-top:0"><span class="n">i</span>它要什么权限</h2>
+  <p><strong>什么权限都不要。</strong>没有辅助功能授权弹窗，没有屏幕录制，没有网络请求，没有账号。判断你在不在用的是系统公开 API（空闲秒数、屏幕是否休眠、摄像头/麦克风是否被占用），鼠标只取坐标。</p>
+  <p class="muted">所有数据留在本地：设置和打卡记录在 UserDefaults，计时快照在 <code>~/Library/Application Support/XieHuiEr/session.json</code>。删掉它就等于重置今天。</p>
+
+  <p class="muted" style="margin-top:36px">想卸载：退出 app，把「应用程序」里的歇会儿删掉即可。开机自启项会自动失效；想彻底清干净再删 <code>~/Library/LaunchAgents/cn.yuou.xiehuier.plist</code>。</p>
+
+</main>
+</body>
+</html>

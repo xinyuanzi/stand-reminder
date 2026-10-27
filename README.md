@@ -103,7 +103,7 @@ open 歇会儿.app
 
 `build.sh` 做三件事：`swiftc` 编译 15 个 Swift 文件 → 组装 `.app` bundle 并拷入素材 → 本地临时签名（`codesign -s -`）。
 
-环境验证过的版本：**macOS 14 / Swift 6.0.3 / arm64**。理论上 macOS 13+ 都能跑（Info.plist 里 `LSMinimumSystemVersion` 是 13.0）。
+环境验证过的版本：**macOS 14 / Swift 6.0.3 / arm64**。`build.sh` 的 target 写死了 `arm64-apple-macos13.0`，所以出来的包只能在 Apple Silicon 上跑；系统版本 macOS 13+ 都能运行（Info.plist 里 `LSMinimumSystemVersion` 是 13.0）。
 
 ## 使用
 
@@ -247,8 +247,8 @@ A：短期内不会。这个项目的核心是一堆 macOS 专有行为（NSPane
 
 ## 已知限制
 
-- 只在 macOS 13+ 上验证过；Apple Silicon 已验证，Intel 理论可行但没测
-- **没有做代码签名和公证**。要分发给别人得自己 `codesign` + `notarytool`，见 [开发指南](docs/DEVELOPMENT.md#8-打包与分发)
+- **发布的包只支持 Apple Silicon**。`build.sh` 的 target 是 arm64，Intel Mac 双击会直接打不开——不是签名问题。想支持 Intel 得自己改 target 交叉编译，作者没有 Intel 机器可测。macOS 13+ 已验证，更老的版本没试过
+- **没有做代码签名和公证**（不买 ¥688/年的 Apple 开发者账号）。dmg 里放了一份「先看我.html」，双击能用浏览器打开，写清了右键打开、系统设置放行、`xattr` 三条路以及「不放心就自己编译」。见 [开发指南](docs/DEVELOPMENT.md#8-打包与分发)
 - **关机一夜回来从 0 开始**。落盘只续 10 分钟内的快照——久到那个程度，我们真的不知道你中间在不在。这是故意的：归零比编造诚实
 - **屏幕设成「永不休眠」时**，熄屏信号永远拿不到。人真走了，累计会一直涨，回来手一动就补弹一次。要走开请手动「暂停 1 小时」
 - 素材是「AI 生成 + 脚本对齐」的产物，不是手绘。每个动作只有 1 帧关键姿态，靠时序和停顿做「动起来」的错觉，没有真正的补间

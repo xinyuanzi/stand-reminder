@@ -34,7 +34,8 @@ v0.9.2–v0.9.5 连续四个版本都在修同一处判定，用户每次反馈�
 | 首次启动引导 ✅ | 三屏：这是什么 / 不需要权限 / 先调哪三个；菜单可重看 |
 | `.dmg` 打包 ✅ | `package.sh`，新版 macOS 用 `diskutil image create from`，老系统退回 `hdiutil` |
 | GitHub Actions ✅ | tag 触发编译 → 打包 → 冒烟检查 → draft Release |
-| 代码签名 + 公证 ⏳ | 还没做。当前是临时签名（`codesign -s -`），别人下载后要走 README 的 `xattr` 绕行。要不要花 ¥688/年买 Developer 账号，等你定 |
+| 代码签名 + 公证 ❌ | **不做**（2026-10-27 定）。要 Apple Developer Program ¥688/年，作者不打算花。零成本替代已落地：dmg 里打包 `packaging/先看我.html`，双击用浏览器打开，写清右键打开 / 系统设置放行 / `xattr` 三条路 + 「不放心就自己编译」 |
+| Intel（x86_64）支持 ⏸ | 当前 `build.sh` 只出 arm64，Intel Mac 直接打不开。改 target 交叉编译理论可行，但没有 Intel 机器可测，发布未验证的二进制不如老实标注不支持 |
 | 英文界面 ⏳ | 文案全部硬编码在 SwiftUI 里，先抽 `Localizable.strings`（中英），再顺势跟随系统语言。工作量大，单独一轮 |
 | README 首屏 GIF ✅ | `Tools/GifShot` + `make_hero_gif.py`：真窗口抓一轮全套三幕（100 帧 / 10s），460px、128 色、1.4MB。不需要 `screencapture` 权限 |
 

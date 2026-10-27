@@ -38,6 +38,8 @@ open 歇会儿.app
 .
 ├── build.sh                  构建脚本（编译 + 组装 bundle + 临时签名）
 ├── package.sh                打 dmg（dist/歇会儿-<版本>.dmg）
+├── packaging/
+│   └── 先看我.html            随 dmg 分发的首次打开说明（未签名分发的主力）
 ├── Sources/                  2919 行，无第三方依赖
 │   ├── main.swift            NSApplication + .accessory（不占 Dock）
 │   ├── AppDelegate.swift     全部调度：喂判定机、弹窗、菜单、鼠标互动      (924)
@@ -419,10 +421,31 @@ defaults delete cn.yuou.xiehuier.preview      # 清一次，保证是全新用�
 
 ## 8. 打包与分发
 
-本地自用，`build.sh` 里的 `codesign -s -` 就够了。**要发给别人**，必须过 Gatekeeper：
+### 当前策略：不买账号，用文档兜住（2026-10-27 定）
+
+本地自用，`build.sh` 里的 `codesign -s -` 就够了。分发给别人时**不做签名公证**——Apple Developer Program ¥688/年，作者不打算花。
+
+替代方案是零成本的：dmg 里塞一份 `packaging/先看我.html`，双击进浏览器，排版正常、能复制命令。里面按「成功率 × 操作难度」排了三条路，**顺序不能反**：
+
+1. **拖进应用程序 → Control 点图标 → 打开**。覆盖九成情况
+2. **系统设置 → 隐私与安全性 → 仍要打开**。第 1 步点完没反应时走这条，很多人不知道有这一屏
+3. **`xattr -dr com.apple.quarantine`**。兜底，附一句「只清隔离标记、不解压、不改内容、不要密码」
+
+再加一段「不放心就自己编译」：未签名分发时，**源码可见是唯一能建立信任的东西**，比任何解释都管用。
+
+**发出前必须自测，而且不能在开发机上测**：
 
 ```bash
-# 1. 用开发者证书签名（需要 Apple Developer Program）
+# 新建一个干净用户，或拷到另一台 Mac
+# 全程不查文档、不开终端，只按 dmg 里那份说明操作
+```
+
+自己机器上试不算数——你的机器早就对这批文件放行过了，quarantine 标记也不在。
+
+### 如果哪天买了账号
+
+```bash
+# 1. 用开发者证书签名
 codesign --force --deep --options runtime \
   --sign "Developer ID Application: YOUR NAME (TEAMID)" 歇会儿.app
 
@@ -437,7 +460,20 @@ xcrun notarytool submit 歇会儿.dmg \
 xcrun stapler staple 歇会儿.dmg
 ```
 
-没做这一步之前，别人下载后必须**右键 → 打开**才能运行。
+做完这一步，`packaging/先看我.html` 就可以从 dmg 里撤掉了——它整篇都在讲怎么绕过 Gatekeeper。
+
+### Intel（x86_64）
+
+`build.sh` 的 target 写死 `arm64-apple-macos13.0`，所以发布的包**在 Intel Mac 上直接打不开**。这不是签名问题，是架构不对。
+
+要支持得交叉编译再合并：
+
+```bash
+swiftc ... -target x86_64-apple-macos13.0 ... -o build/x86_64
+lipo -create -output 歇会儿 build/arm64 build/x86_64
+```
+
+**没做**，也没打算做：手上没有 Intel 机器，发一个自己没跑过的二进制，比老实标注「只支持 Apple Silicon」更不负责。README、dmg 说明里都写明了。
 
 ## 9. 工程约束（容易踩）
 

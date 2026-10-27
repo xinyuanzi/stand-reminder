@@ -20,6 +20,7 @@ swiftc -O \
     Sources/Presence.swift \
     Sources/PresenceMachine.swift \
     Sources/SessionStore.swift \
+    Sources/Wander.swift \
     Sources/Prefs.swift \
     Sources/Habits.swift \
     Sources/LaunchAtLogin.swift \

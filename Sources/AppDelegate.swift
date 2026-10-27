@@ -357,9 +357,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             p.animator().alphaValue = 1
         }
 
-        // 静默时不起升级计时：卡片安静待着，不追鼠标也不转暖色。
-        // 手一回来再补上（见 tick 里的补装逻辑）。
-        if !machine.inSilence { startEscalation() }
+        // 弹出来就开始计 12 秒，不区分静默。
+        //
+        // 这里以前写的是 `if !machine.inSilence { startEscalation() }`，本意是
+        // 「人在思考时别用游走打扰」。实际效果是反的：坐到阈值时如果手已经停了
+        // 5 分钟（读长文档、看视频、想事情——非常常见），弹窗那一刻 inSilence 就是
+        // true，计时器压根不创建；而用户看到卡片后的第一反应往往是停下手盯着它，
+        // 手一直不回来，兜底的补装也就永远等不到。用户报的现象就是「12 秒毫无反应」。
+        //
+        // 判断修正：静默只该拦**强提醒升级**（见 tick 里 upgradeToStrong 的条件），
+        // 不该拦这个。游走是软提醒阶段的手段，需求原话就是「一直没点就让它动」，
+        // 而且横向慢速移动本身很轻，不构成打扰。
+        startEscalation()
         startGazeTracking()
         updateStatus()
     }
@@ -479,6 +488,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func escalate() {
+        // 一次性 Timer 触发后不会把引用置 nil。不手动清掉的话，tick 里所有
+        // `escalateTimer == nil` 的判断会一直认为计时器还在跑。
+        escalateTimer = nil
         guard panelVisible else { return }
         model.stage = .stretching
         model.minutes = Int(machine.focusSeconds / 60)
@@ -513,19 +525,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func wanderStep() {
         guard let p = panel, p.isVisible, wanderRect.width > 0 else { return }
 
-        let width = p.frame.width
+        // 碰边反弹的规则在 Wander 里（纯函数，有测试），这里只负责取值和落地
         let minX = wanderRect.minX + panelMargin
-        let maxX = wanderRect.maxX - width - panelMargin
-        guard maxX > minX else { return }
-
-        var x = p.frame.origin.x + wanderDirection * 2
-        if x <= minX {
-            x = minX
-            wanderDirection = 1
-        } else if x >= maxX {
-            x = maxX
-            wanderDirection = -1
-        }
+        let maxX = wanderRect.maxX - p.frame.width - panelMargin
+        guard let x = Wander.stepX(from: p.frame.origin.x,
+                                   direction: &wanderDirection,
+                                   minX: minX, maxX: maxX) else { return }
         p.setFrameOrigin(NSPoint(x: x, y: wanderRect.minY + panelMargin))
     }
 

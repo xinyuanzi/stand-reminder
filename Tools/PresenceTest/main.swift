@@ -298,6 +298,71 @@ do {
     check(!e.reminderIsDeferred, "这条不该带补发标记")
 }
 
+// MARK: - 16. 游走步进（Wander）
+//
+// 用户实测报过「12 秒卡片没动」，根因在触发条件（见 AppDelegate.showReminder），
+// 但顺带发现这段边界反弹从来没被测过。规则不难，写错的方式却很多：
+// 贴边不反向 → 钉死在边上；用 < 代替 <= → 差一像素永远到不了边、原地抖。
+
+do {
+    let minX: CGFloat = 100
+    let maxX: CGFloat = 500
+
+    // 16.1 中间往左：正常递减，方向不变
+    var d: CGFloat = -1
+    if let x = Wander.stepX(from: 300, direction: &d, minX: minX, maxX: maxX) {
+        check(x == 298, "中间左移应减 2px，实际 \(x)")
+        check(d == -1, "没碰边不该换向")
+    } else {
+        check(false, "有空间时不该返回 nil")
+    }
+
+    // 16.2 差一步到左边界：贴边并且反向，不能停在边界外
+    d = -1
+    if let x = Wander.stepX(from: 101, direction: &d, minX: minX, maxX: maxX) {
+        check(x == minX, "撞左边界应贴住 100，实际 \(x)")
+        check(d == 1, "撞左边界后方向应转正，实际 \(d)")
+    } else {
+        check(false, "有空间时不该返回 nil")
+    }
+
+    // 16.3 差一步到右边界
+    d = 1
+    if let x = Wander.stepX(from: 499, direction: &d, minX: minX, maxX: maxX) {
+        check(x == maxX, "撞右边界应贴住 500，实际 \(x)")
+        check(d == -1, "撞右边界后方向应转负，实际 \(d)")
+    } else {
+        check(false, "有空间时不该返回 nil")
+    }
+
+    // 16.4 从边界出发不会卡死：第二步必须真的离开边界
+    d = 1
+    _ = Wander.stepX(from: minX, direction: &d, minX: minX, maxX: maxX)
+    if let x2 = Wander.stepX(from: minX, direction: &d, minX: minX, maxX: maxX) {
+        check(x2 > minX, "贴在左边界时下一步必须往右走，实际停在 \(x2)")
+    }
+
+    // 16.5 来回跑 2000 帧不能越界（真实场景是 30fps 跑几分钟）
+    d = -1
+    var x: CGFloat = 300
+    var outOfRange = 0
+    for _ in 0..<2000 {
+        guard let next = Wander.stepX(from: x, direction: &d, minX: minX, maxX: maxX) else { break }
+        x = next
+        if x < minX || x > maxX { outOfRange += 1 }
+    }
+    check(outOfRange == 0, "来回跑 2000 帧不该越界，越界 \(outOfRange) 次")
+    check(abs(x - minX) < 1 || abs(x - maxX) < 1 || (x > minX && x < maxX),
+          "跑完之后仍然在区间内，实际 \(x)")
+
+    // 16.6 面板比屏幕还宽：没有可走空间，返回 nil（调用方原地不动）
+    d = 1
+    check(Wander.stepX(from: 300, direction: &d, minX: 100, maxX: 100) == nil,
+          "maxX == minX 时应返回 nil")
+    check(Wander.stepX(from: 300, direction: &d, minX: 200, maxX: 100) == nil,
+          "maxX < minX 时应返回 nil")
+}
+
 // MARK: - 汇总
 
 if failures.isEmpty {

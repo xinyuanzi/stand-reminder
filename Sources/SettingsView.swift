@@ -105,11 +105,32 @@ struct SettingsView: View {
                     applyLogin(enabled)
                 }
             }
+
+            // 这一行是为了「我改了怎么没生效」这类问题存在的。
+            // 菜单栏常驻 app 换掉磁盘上的二进制不会影响正在跑的进程，
+            // 没有版本号就只能靠 PID 猜跑的是哪一版。
+            Section {
+                HStack {
+                    Text("歇会儿").font(.system(size: 11))
+                    Spacer()
+                    Text(Self.versionLine)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
         }
         .formStyle(.grouped)
         .frame(width: 470)
         // 高度交给窗口决定，Form 自带滚动。
         // 写死高度（含 fixedSize）的后果是每加一个区块就把底部截掉一截。
+    }
+
+    private static var versionLine: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "v\(short) (\(build))"
     }
 
     private func labeled(_ title: String, _ detail: String) -> some View {

@@ -112,7 +112,7 @@ hideReminder()
 
 | 层 | 在哪 | 触发 | 会打断别的层吗 |
 |---|---|---|---|
-| 待机层 | `MascotCard` 的 SwiftUI 修饰符 | 常驻（呼吸 2.9s / 摆动 5.3s） | 不会，只是叠一层变换 |
+| 待机层 | `MascotCard` 的 SwiftUI 修饰符 | 常驻（浮沉 2.9s / 横移 5.3s，**只平移不缩放不旋转**） | 不会，只是叠一层位移 |
 | 表情层 | `MascotAnimator.eyeClosed` + `ReminderModel.gaze` | 随机 3.2~8.2s / 15fps | 不会，只在 `pose == .sit` 时覆盖 |
 | 事件层 | `MascotAnimator` 的队列 | 循环播放、被戳反应 | 会，`react()` 会接管队列，播完接回 |
 

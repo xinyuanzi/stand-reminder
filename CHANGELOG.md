@@ -6,6 +6,19 @@
 
 ---
 
+## v0.9.1 · 2026-10-27
+
+### 修复
+
+- **头像发虚、毛发边缘出现第二层轮廓（「重影」）**。根因是待机层的**缩放 + 旋转动画**：`scaleEffect(1.0 ↔ 1.022)` 和 `rotationEffect(±0.9°, anchor: .bottom)` 都是永不停歇的，等于让整张位图**每一帧都重新插值**。改成整数像素的纯平移（浮沉 ±2pt / 横移 ±1pt）后，CA 只搬纹理不重采样。详见 [D-17](docs/DECISIONS.md#d-17--待机层不能用缩放和旋转)。
+- 头像 `Image` 补 `.interpolation(.high)` + `.antialiased(true)`。512px 素材要落到约 291px（112pt × 1.30 × @2x），缩小采样的质量交给高质量插值。
+
+### 变更
+
+- 素材按形象分目录：`Resources/mascots/{style}/{pose}.png`，原始图 `Resources/frames/{style}/{pose}_raw.png`。新增 `Tools/paths.py` 作为路径唯一出处，Python 脚本不再要求 `cd` 到项目根。
+
+---
+
 ## v0.9.0 · 2026-10-27
 
 第一个准备开源的版本。

@@ -239,6 +239,10 @@ struct MascotCard: View {
                     ZStack {
                         if let image = image(for: displayPose) {
                             Image(nsImage: image)
+                                // 素材 512px 要塞进 112pt（@2x 是 224pt 的 1.3 倍 ≈ 291px），
+                                // 縮小采样交给高质量插值，否则毛发边缘会糊成一片。
+                                .interpolation(.high)
+                                .antialiased(true)
                                 .resizable()
                                 .scaledToFit()
                                 .frame(width: 112, height: 112)
@@ -247,11 +251,13 @@ struct MascotCard: View {
                     // 不做交叉淡入。AI 生成的多帧不是真正的中间帧，
                     // 两张姿态图叠 85ms 在 126pt 里会被看成「两只动物闪一下」，
                     // 比硬切难看得多。2D 逐帧动画本来就该硬切。
-                    // 待机层：呼吸起伏。常驻、永不停，这是「活着」和「停在某帧」的分界线
-                    .scaleEffect(breathe ? 1.022 : 1.0)
-                    .offset(y: breathe ? -1.4 : 0)
-                    // 重心摆动：绕底部转，像站着时左右倒重心
-                    .rotationEffect(.degrees(sway ? 0.9 : -0.9), anchor: .bottom)
+                    //
+                    // 待机层：浮沉 + 微横移。**只用平移，不用缩放也不用旋转。**
+                    // 缩放和旋转会让整张图每一帧都重新插值，在 126pt 里表现为整体发虚、
+                    // 毛发边缘出现第二层轮廓（旧版绕底部转 ±0.9° 就是这么糊的）；
+                    // 平移在整数像素下只是搬纹理，零重采样，图永远 1:1 清晰。
+                    // 幅度取整数，@2x 下正好落在物理像素上。
+                    .offset(x: sway ? 1 : -1, y: breathe ? -2 : 0)
                     .scaleEffect(mascotZoom)
                     .offset(mascotOffset)
                 }
@@ -319,8 +325,11 @@ struct MascotCard: View {
         onPoke()
     }
 
-    /// 待机层：呼吸与重心摆动。两条动画周期故意错开（2.9s / 5.3s），
+    /// 待机层：浮沉与重心微移。两条动画周期故意错开（2.9s / 5.3s），
     /// 同周期会让两个方向同时到极点，看起来像整体在机械振动。
+    ///
+    /// 两者都只驱动 `offset`（平移），不碰缩放和旋转 —— 见 body 里的注释，
+    /// 缩放/旋转会让整张图持续重新插值，肉眼就是发虚和边缘重影。
     private func startIdleMotion() {
         withAnimation(.easeInOut(duration: 2.9).repeatForever(autoreverses: true)) {
             breathe = true

@@ -38,19 +38,19 @@ open 歇会儿.app
 .
 ├── build.sh                  构建脚本（编译 + 组装 bundle + 临时签名）
 ├── package.sh                打 dmg（dist/歇会儿-<版本>.dmg）
-├── Sources/                  2907 行，无第三方依赖
+├── Sources/                  2919 行，无第三方依赖
 │   ├── main.swift            NSApplication + .accessory（不占 Dock）
 │   ├── AppDelegate.swift     全部调度：喂判定机、弹窗、菜单、鼠标互动      (924)
-│   ├── PresenceMachine.swift **判定机（纯函数，可测）**                     (215)
+│   ├── PresenceMachine.swift **判定机（纯函数，可测）**                     (217)
 │   ├── IdleClock.swift       读系统空闲秒数（零权限）                     (13)
 │   ├── Presence.swift        熄屏/锁屏检测，确凿判定离开（零权限）        (32)
 │   ├── SessionStore.swift    计时落盘，重启不归零                         (88)
 │   ├── Prefs.swift           UserDefaults 配置 + 免打扰时段判定           (115)
-│   ├── Habits.swift          打卡、连续天数、形象解锁规则                (147)
+│   ├── Habits.swift          打卡、连续天数、形象解锁规则                (151)
 │   ├── LaunchAtLogin.swift   LaunchAgent 开机自启                         (69)
 │   ├── MeetingDetector.swift 摄像头/麦克风占用检测                        (54)
 │   ├── ReminderPanel.swift   NSPanel 子类，禁止成为 key/main 窗口        (7)
-│   ├── MascotAnimator.swift  姿态枚举、动作库、三层动画引擎              (365)
+│   ├── MascotAnimator.swift  姿态枚举、动作库、三层动画引擎              (371)
 │   ├── MascotCard.swift      SwiftUI 卡片视图 + 表情层覆盖               (405)
 │   ├── SettingsView.swift    SwiftUI 设置页「Form」                      (235)
 │   └── OnboardingView.swift  三屏首次启动引导（可离屏预览）              (231)
@@ -71,6 +71,7 @@ open 歇会儿.app
 │   ├── group_align.py        按头顶宽度定缩放
 │   ├── make_icon.py          生成 AppIcon.icns（猫头鹰头部特写）
 │   ├── make_hero_gif.py      帧序 → README 首屏 GIF（铺底 + 压色 + 控体积）
+│   ├── make_mascots_sheet.py 五只同框 → docs/images/mascots.png（按 app 取景参数贴图）
 │   ├── presence_check.swift  熄屏/锁屏三信号探针（换判定依据时先跑它）
 │   ├── PresenceTest/         判定机时间轴用例（改判定逻辑必跑）
 │   ├── FullscreenTest/       全屏 Space 验证（改窗口层级/collectionBehavior 必跑）
@@ -186,14 +187,14 @@ private var displayPose: MascotPose {
 
 ### 5.1 命名约定
 
-**一个形象一个文件夹**。四个形象 × 13~16 张 = 近 60 个文件，平铺在 `Resources/` 根目录时前缀全一样，加第五个形象就没法扫了。
+**一个形象一个文件夹**。五个形象 × 13~16 张 = 70 多个文件，平铺在 `Resources/` 根目录时前缀全一样，加第五个形象就没法扫了。
 
 ```
 Resources/frames/{style}/{pose}_raw.png      ← AI 原始图，1024×1024，白底（不入库）
 Resources/mascots/{style}/{pose}.png         ← 抠图对齐后的成品，512×512，透明
 ```
 
-`style`：`a` 橘猫 / `b` 水獭 / `c` 小熊 / `d` 猫头鹰
+`style`：`a` 橘猫 / `b` 水獭 / `c` 小熊 / `d` 猫头鹰 / `e` 柴犬
 `pose`：`sit` `blink` `yawn1` `yawn2` `scratch` `stand` `up` `punch1` `punch2` `flap1` `flap2` `sitdown` `gaze_left` `gaze_right` `gaze_up` `gaze_down`
 
 路径只在两处出现，改结构时都改这两处：
@@ -203,7 +204,7 @@ Resources/mascots/{style}/{pose}.png         ← 抠图对齐后的成品，512�
 | `Tools/paths.py` | 所有 Python 脚本调 `frame_raw(style, pose)` / `mascot_png(style, pose)`，路径基于 `__file__` 计算，**脚本可以在任何目录执行** |
 | `MascotAssets.image(style:pose:)` | App 侧唯一入口。`.app` 里走 `Bundle.main.url(forResource:subdirectory: "mascots/{style}")`，裸可执行文件（测试工具）走 `resourcePath` 拼路径兜底 |
 
-**加形象不需要改任何路径代码**，建个 `Resources/mascots/e/` 目录就能用。
+**加形象不需要改任何路径代码**，建个 `Resources/mascots/f/` 目录就能用。
 
 **缺素材不会崩**，`MascotCard.image(for:)` 会按 `fallbackName` 退到语义最接近的一帧（比如所有 gaze 退到 `sit`）。但**别把没画完的姿态先注册进 `Unlocks`**——用户选中后会因为缺素材全部回落同一帧，等于一只不动的雕塑。
 
@@ -223,13 +224,23 @@ Resources/mascots/{style}/{pose}.png         ← 抠图对齐后的成品，512�
 不要移动{角色}在画面里的位置和大小。不要添加文字。
 ```
 
-三条硬规则，都是踩出来的：
+四条硬规则，都是踩出来的：
 
 1. **必须把「不要改机位/缩放/裁切」写进去**。不写，AI 会自作主张推近一档，下一帧就对不上。
 2. **眼睛状态要单独锁**。「保持半睁下垂」，不写的话 AI 会顺手把眼睛瞪大——视线左右切换时等于在闪，而且丢了原本的困倦感。
 3. **一次只改一件事**。想同时改姿势和表情，两样都做不好。
+4. **底图必须已经在目标姿态上**。这条是第 3 条的推论，但单独拎出来因为最容易犯：
+   想画「站着出拳」，底图要用**已经站着的 `stand_raw`**，不能拿 `sit_raw` 去改。
+   柴犬的 `up`/`punch1`/`punch2` 第一轮全部以坐姿为底图，要求「起身 + 抬手」两件事，
+   出来的三张全被拉回坐姿（`punch2` 甚至是「坐在椅子上举了个手」）。换 `stand_raw` 当底图、
+   只改手臂之后，一次就过。**改姿态之前先问：这张底图离目标姿态还差几步？超过一步就先出中间帧。**
 
 参考图用**上一个成功的成品 raw**，不要用抠过的 PNG（透明底会让 AI 困惑）。给 `input_fidelity: "high"`。
+
+**转头 ≠ 视线偏移**。柴犬的定妆照是「3/4 侧脸、鼻子朝画面左」的构图，
+让它「往右转头 10 度」时 AI 会把整颗头重绘一遍（改掉 3.3 万像素、脸型也跟着变），
+方向感却没出来。视线帧的正确做法是**只动眼球和眼皮、明确禁止转头**，
+接受它是「微表情级」的效果——毕竟显示尺寸只有 112pt。
 
 ### 5.3 抠图
 
@@ -269,7 +280,10 @@ for p in ['sit','blink','yawn1']:
 "
 
 # ② 像素差异：确认「改的地方真的改了」
-#    gaze 帧与 sit 的差异应该 >1 万像素（512² 的 4% 以上）
+#    但别拿固定阈值套所有形象 —— 差异量级取决于构图。
+#    猫头鹰 gaze 约 1.7~3.3 万、橘猫约 5 千、柴犬只有 1.6~3.3 千（眼睛小又半睁）。
+#    柴犬那 1600 像素在 112pt 里依然能读出「在往上看」，所以判据是
+#    「按 112pt 渲染出来肉眼分得出方向」，不是某个绝对像素数。
 ```
 
 **判断能不能看出来，必须按真实显示尺寸算**：头像区只有 112pt，512 下差 1.9% 的抖动到 112pt 只剩几点像素。低于 blink 的差异量级（约 65 像素）就等于不可见，不用为它做额外素材。
@@ -364,6 +378,19 @@ cp -R Resources/mascots /tmp/ws4/
 | `Preview` | 设置页 / 引导页离屏渲染 → `/tmp/settings.png` |
 | `LoginTest` | LaunchAgent plist 写入与路径自愈 |
 
+**截文档图之前，把 Info.plist 拷到可执行文件旁边、并把 bundle id 改掉**：
+
+```bash
+cp Resources/Info.plist /tmp/pv/Info.plist
+plutil -replace CFBundleIdentifier -string cn.yuou.xiehuier.preview /tmp/pv/Info.plist
+defaults delete cn.yuou.xiehuier.preview      # 清一次，保证是全新用户视角
+```
+
+两个原因缺一不可：
+
+- **不拷 Info.plist 就没有版本号**。`SettingsView.versionLine` 读 `Bundle.main.infoDictionary`，裸可执行文件没有 bundle，渲染出来是 `v? (?)`，直接进 README 很难看。
+- **拷了不改 bundle id 会读到真实使用数据**。`UserDefaults.standard` 按 bundle id 定位 domain，一旦和正式版同名，截图里就会出现你自己「连续坚持 1 天、形象全解锁」的状态。这张图是给陌生人看的，必须是全新用户的视角。
+
 **为什么必须用真窗口测视觉**：离屏 `NSHostingView` 永远按「窗口已激活」渲染，会把 non-activating 面板的降级外观问题全部掩盖掉——按钮白底白字就是这么漏出去的。
 
 **为什么判定逻辑必须能离屏测**：它每秒跑一次，靠人盯菜单栏只能验「这一刻对不对」，验不了「昨天合盖一夜之后对不对」。判定的全部风险都在长尾场景里，而长尾场景只能靠把时间轴快进。
@@ -374,17 +401,21 @@ cp -R Resources/mascots /tmp/ws4/
 
 ## 7. 新增一个形象（Checklist）
 
-1. **先只出 1 张坐姿定妆照**给相关人确认。别一次画 10 张，造型不对就全废
+1. **先只出 1 张坐姿定妆照**给相关人确认。别一次画 10 张，造型不对就全废。
+   定妆照改两三版是常态：柴犬第一版没露卷尾、脸太像猫，第二版才定稿
 2. 定妆照转成品：`normalize.py` → 作为该形象的参照帧 `Resources/mascots/{x}/sit.png`
-3. 按 [5.2](#52-出图提示词模板) 逐张出动作，命名 `{x}_{pose}_raw.png`
-4. 坐姿家族（blink / yawn / scratch / sitdown / gaze_*）→ `fixed_align.py`
-5. 站立家族（stand / up / punch 或 flap）→ 先确认机位没变，再 `fixed_align.py`
-6. 验证：包围盒一致 + 像素差异足够
-7. `MascotPose` 不够用的话加枚举（`rawValue` 用下划线命名以匹配文件名）
-8. 语汇不匹配的形象，在 `MascotRoutine.variants(for:)` 里给它自己的动作库
-9. 补 `fallbackName` 映射，防止缺素材时哑掉
-10. 最后才注册进 `Unlocks.styles`
-11. 跑 `AnimTest` + `WindowShot` 验收
+3. 按 [5.2](#52-出图提示词模板) 逐张出动作，落 `Resources/frames/{x}/{pose}_raw.png`
+4. **先出 4 张最容易画崩的**（`stand` / `up` / `punch1` / `punch2`）验证姿态能不能立住，
+   过了再补剩下的坐姿家族。顺序反了会白画一批
+5. 坐姿家族（blink / yawn / scratch / sitdown / gaze_*）→ `fixed_align.py`
+6. 站立家族（stand / up / punch 或 flap）→ 先确认机位没变，再 `fixed_align.py`
+7. 验证：包围盒一致 + 像素差异足够（判据见 [5.5](#55-验证素材没做坏)）
+8. `MascotPose` 不够用的话加枚举（`rawValue` 用下划线命名以匹配文件名）
+9. 语汇不匹配的形象，在 `MascotRoutine.variants(for:)` 里给它自己的动作库
+10. 补 `fallbackName` 映射，防止缺素材时哑掉
+11. 最后才注册进 `Unlocks.styles`，同时确认解锁天数没跟前一只挤在一起
+12. 重跑 `Tools/make_mascots_sheet.py` 更新 README 里的同框图
+13. 跑 `AnimTest` + `WindowShot` 验收
 
 ## 8. 打包与分发
 

@@ -148,8 +148,14 @@ enum MascotRoutine {
     }
 
     /// 按形象取对应的动作库。缺素材时不会静音，只会退回坐姿（见 MascotCard.image(for:)）。
+    ///
+    /// E（柴犬）是哺乳动物，两条后腿站得起、前爪握得成拳，和前三只共用同一套动作。
+    /// 只有猫头鹰需要换语汇，理由见上面 Owl 的注释。
     static func variants(for style: String) -> [[(MascotPose, TimeInterval)]] {
-        style == "d" ? Owl.variants : restVariants
+        switch style {
+        case "d": return Owl.variants
+        default: return restVariants
+        }
     }
 }
 

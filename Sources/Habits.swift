@@ -9,12 +9,16 @@ struct UnlockRule {
 }
 
 enum Unlocks {
-    /// 默认送羊毛毡小熊；橘猫、猫头鹰、水獭靠坚持解锁。
+    /// 默认送羊毛毡小熊；其余四只靠坚持解锁。
+    ///
+    /// 间隔统一 5 天，柴犬摆在最后一档：它是四只里唯一「先有定妆照、
+    /// 再按定妆照批量出动作」的，制作成本最高，放在 20 天当压轴。
     static let styles: [UnlockRule] = [
         UnlockRule(style: "c", name: "羊毛毡小熊", days: 0),
         UnlockRule(style: "a", name: "毛绒橘猫", days: 5),
         UnlockRule(style: "d", name: "圆胖猫头鹰", days: 10),
-        UnlockRule(style: "b", name: "水彩水獭", days: 15)
+        UnlockRule(style: "b", name: "水彩水獭", days: 15),
+        UnlockRule(style: "e", name: "圆胖柴犬", days: 20)
     ]
 
     /// 连续 30 天进「老友模式」：文案不再是催促，改成熟人语气

@@ -36,20 +36,22 @@ open 歇会儿.app
 
 ```
 .
-├── build.sh                  构建脚本
-├── Sources/                  2303 行，无第三方依赖
+├── build.sh                  构建脚本（编译 + 组装 bundle + 临时签名）
+├── package.sh                打 dmg（dist/歇会儿-<版本>.dmg）
+├── Sources/                  2583 行，无第三方依赖
 │   ├── main.swift            NSApplication + .accessory（不占 Dock）
-│   ├── AppDelegate.swift     全部调度：计时、判定、弹窗、菜单、鼠标互动  (858)
+│   ├── AppDelegate.swift     全部调度：计时、判定、弹窗、菜单、鼠标互动  (907)
 │   ├── IdleClock.swift       读系统空闲秒数（零权限）                     (13)
 │   ├── Presence.swift        熄屏/锁屏检测，确凿判定离开（零权限）        (32)
-│   ├── Prefs.swift           UserDefaults 配置 + 免打扰时段判定           (108)
+│   ├── Prefs.swift           UserDefaults 配置 + 免打扰时段判定           (111)
 │   ├── Habits.swift          打卡、连续天数、形象解锁规则                (147)
 │   ├── LaunchAtLogin.swift   LaunchAgent 开机自启                         (69)
 │   ├── MeetingDetector.swift 摄像头/麦克风占用检测                        (54)
 │   ├── ReminderPanel.swift   NSPanel 子类，禁止成为 key/main 窗口        (7)
 │   ├── MascotAnimator.swift  姿态枚举、动作库、三层动画引擎              (365)
 │   ├── MascotCard.swift      SwiftUI 卡片视图 + 表情层覆盖               (405)
-│   └── SettingsView.swift    SwiftUI 设置页「Form」                      (238)
+│   ├── SettingsView.swift    SwiftUI 设置页「Form」                      (235)
+│   └── OnboardingView.swift  三屏首次启动引导（可离屏预览）              (231)
 ├── Resources/
 │   ├── Info.plist
 │   ├── mascots/{style}/{pose}.png  成品素材（512×512 透明 PNG）
@@ -63,6 +65,7 @@ open 歇会儿.app
 │   ├── fixed_align.py        对齐③：固定取景（推荐）
 │   ├── warm_align.py         实验失败，留作反向教材
 │   ├── group_align.py        按头顶宽度定缩放
+│   ├── make_icon.py          生成 AppIcon.icns（猫头鹰头部特写）
 │   ├── presence_check.swift  熄屏/锁屏三信号探针（换判定依据时先跑它）
 │   ├── AnimTest/             动作引擎行为测试
 │   ├── PokeTest/             验证开窗口拖动的面板上按钮仍能点

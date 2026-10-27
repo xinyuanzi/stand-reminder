@@ -6,6 +6,26 @@
 
 ---
 
+## v0.10.0 · 2026-10-27
+
+发布准备。这一版没有动判定逻辑，全是「让陌生人装得上、看得懂」的事。
+
+### 新增
+
+- **应用图标**。此前 `Info.plist` 连 `CFBundleIconFile` 都没有，Finder 里是空白图标。用猫头鹰**头部特写**生成 `.icns`（完整姿态里带一把办公椅，缩到 32px 会糊成一团灰）。生成器 `Tools/make_icon.py` 入库，改图重跑即可。
+- **三屏首次启动引导** `OnboardingView`：这是什么 → 不需要任何权限（逐条列出用到的三个系统信号）→ 先调哪三个设置。此前首次启动只是把设置页弹出来，用户看到一堆 Stepper 不知道在调什么。
+- 菜单新增「重新看一遍引导」，随时可以重看。
+- `package.sh`：产 `dist/歇会儿-<版本>.dmg`（app + Applications 软链接）。新版 macOS 用 `diskutil image create from`，老系统自动退回 `hdiutil`。
+- `.github/workflows/release.yml`：打 tag 自动编译 → 打包 → 冒烟检查（bundle 结构、图标、版本号）→ 建 draft Release。
+
+### 变更
+
+- 首次启动不再自动开设置页，改开引导。`hasLaunchedBefore` 由引导自己写（点「跳过」也算），所以中途强退会再弹一次——可接受。
+- 设置页与引导都设了 `windowWillClose` 清理引用，关掉即释放，下次打开重建（避免停在旧状态、停在最后一屏）。
+- README 安装章节改成 dmg 流程，补 `xattr -dr com.apple.quarantine` 的绕行说明；自己编译的部分补上 `./package.sh`。
+
+---
+
 ## v0.9.5 · 2026-10-27
 
 ### 修复

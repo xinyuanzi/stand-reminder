@@ -30,6 +30,13 @@ if args.count > 1 && args[1] == "settings" {
     exit(0)
 }
 
+if args.count > 1 && args[1] == "onboarding" {
+    let p = args.count > 2 ? (Int(args[2]) ?? 0) : 0
+    render(OnboardingView(initialPage: p) {}, size: NSSize(width: 520, height: 620),
+           to: "/tmp/onboarding_\(p).png")
+    exit(0)
+}
+
 let style = args.count > 1 ? args[1] : "c"
 let poseName = args.count > 2 ? args[2] : "sit"
 let urgency: ReminderUrgency = (args.count > 3 && args[3] == "strong") ? .strong : .soft

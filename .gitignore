@@ -1,6 +1,8 @@
 # 构建产物
 歇会儿.app/
 *.app/
+dist/
+dist/
 
 # AI 原始出图（约 30MB）。成品 mascot_*.png 才入库，
 # 原因见 docs/DECISIONS.md#d-16-素材不入库成品入库

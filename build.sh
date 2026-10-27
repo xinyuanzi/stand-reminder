@@ -26,12 +26,14 @@ swiftc -O \
     Sources/ReminderPanel.swift \
     Sources/MascotCard.swift \
     Sources/SettingsView.swift \
+    Sources/OnboardingView.swift \
     -o "$APP/Contents/MacOS/XieHuiEr" \
     -framework AVFoundation \
     -framework CoreAudio
 
 echo "==> 组装 bundle"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 # 素材按形象分目录，整目录拷：Contents/Resources/mascots/{a,b,c,d}/*.png
 cp -R Resources/mascots "$APP/Contents/Resources/"
 

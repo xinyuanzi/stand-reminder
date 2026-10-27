@@ -2,12 +2,13 @@ import AppKit
 import SwiftUI
 import Combine
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private var statusItem: NSStatusItem!
     private var panel: ReminderPanel?
     private var hosting: NSHostingView<MascotCard>?
     private var settingsWindow: NSWindow?
+    private var onboardingWindow: NSWindow?
 
     private let prefs = Prefs.shared
     private let model = ReminderModel()
@@ -109,11 +110,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: NSWorkspace.didWakeNotification, object: nil
         )
 
-        // 首次启动直接把设置窗口打开，否则用户只看到菜单栏多了个图标，不知道这是什么
+        // 首次启动弹三屏引导。以前直接开设置页，用户看到一堆 Stepper 不知道这是什么。
+        // hasLaunchedBefore 由引导自己写（点跳过也算），这里只负责弹窗。
         if !UserDefaults.standard.bool(forKey: "hasLaunchedBefore") {
-            UserDefaults.standard.set(true, forKey: "hasLaunchedBefore")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
-                self?.openSettings()
+                self?.openOnboarding()
             }
         }
     }
@@ -770,6 +771,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsItem.target = self
         menu.addItem(settingsItem)
 
+        let onboardingItem = NSMenuItem(title: "重新看一遍引导",
+                                        action: #selector(openOnboarding), keyEquivalent: "")
+        onboardingItem.target = self
+        menu.addItem(onboardingItem)
+
         unlockAllMenuItem = NSMenuItem(title: "解锁全部形象（调试）",
                                        action: #selector(toggleUnlockAll), keyEquivalent: "")
         unlockAllMenuItem.target = self
@@ -848,6 +854,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Form 自带滚动，内容超出窗口时能正常往下翻
             window.contentView = host
             window.isReleasedWhenClosed = false
+            window.delegate = self
             window.center()
             settingsWindow = window
         }
@@ -855,7 +862,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
+    /// 首次启动的三屏引导，也能从菜单重看一遍
+    @objc private func openOnboarding() {
+        if onboardingWindow == nil {
+            let view = OnboardingView { [weak self] in
+                self?.onboardingWindow?.close()
+            }
+            let host = NSHostingView(rootView: view)
+            host.layoutSubtreeIfNeeded()
+
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 520, height: 620),
+                styleMask: [.titled, .closable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "欢迎使用歇会儿"
+            window.titlebarAppearsTransparent = true
+            window.isMovableByWindowBackground = true
+            window.backgroundColor = NSColor(red: 0.988, green: 0.957, blue: 0.910, alpha: 1)
+            window.contentView = host
+            window.isReleasedWhenClosed = false
+            window.delegate = self
+            window.center()
+            onboardingWindow = window
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        onboardingWindow?.makeKeyAndOrderFront(nil)
+    }
+
     @objc private func quit() {
         NSApplication.shared.terminate(nil)
+    }
+}
+
+extension AppDelegate {
+
+    /// 关窗即丢引用，下次打开重建——避免设置页停在旧状态、引导停在最后一屏
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        if window === settingsWindow { settingsWindow = nil }
+        if window === onboardingWindow { onboardingWindow = nil }
     }
 }

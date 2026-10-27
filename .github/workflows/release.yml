@@ -1,0 +1,51 @@
+name: release
+
+# 打 tag（v1.0.0 这种）就编译、打包、传 Release。
+# 没有签名证书也能跑：build.sh 用临时签名（codesign -s -），能编译能运行，
+# 只是别人下载后要走 README 里的 quarantine 绕行。
+
+on:
+  push:
+    tags: ["v*"]
+  # 手动跑一次也行，方便验证 workflow 本身
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # macos-14 起 runner 是 Apple Silicon，和 build.sh 里的 arm64 目标一致
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 环境检查
+        run: |
+          sw_vers
+          xcrun --find swiftc
+          swiftc --version
+
+      - name: 编译
+        run: ./build.sh
+
+      - name: 打包 dmg
+        run: ./package.sh --no-build
+
+      - name: 冒烟测试
+        # GUI 应用没法在 CI 里真跑，但可以确认 bundle 结构、图标、版本号都在
+        run: |
+          APP="歇会儿.app"
+          test -x "$APP/Contents/MacOS/XieHuiEr"
+          test -f "$APP/Contents/Resources/AppIcon.icns"
+          test -d "$APP/Contents/Resources/mascots/d"
+          ls -la dist/
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist"
+          codesign -dv "$APP" 2>&1 | head -3
+
+      - name: 上传 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.dmg
+          generate_release_notes: true
+          draft: true

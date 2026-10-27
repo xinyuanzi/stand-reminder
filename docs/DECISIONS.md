@@ -584,3 +584,68 @@ mutating func step(now: Double, input: PresenceInput,
 所以这条决策的适用范围要收窄：**「只动眼睛不转头」是对的，但它只能保证「不做坏」，不能保证「做得出效果」。视线跟随能不能成立，在定妆照定稿那一刻就已经决定了。**
 
 **对路线图的影响**：原计划给水獭、小熊补四向视线（8 张），按现有画风做出来大概率是白花钱。要做就得先定一条形象规格——**眼睛要有可见眼白，虹膜宽度不低于眼睛宽度的 1/3**——否则不如不做，让 `MascotPose.gaze*` 一直走 `fallbackName` 退回 `sit`。
+
+---
+
+## D-26 · 「按着鼠标」不等于「在拖窗口」，窗口移动必须用坐标反推来源
+
+**背景**：v0.12.1 修完「12 秒计时器没创建」之后，用户再测，卡片弹出来了、也切到了伸懒腰姿态（标题变成「喂——还在坐？」，说明 `escalate()` 确实跑了），**但还是不动**。
+
+排查过程：
+1. 先确认偏好设置：`wanderEnabled = 1`、`escalateSeconds = 12`，都不是配置问题
+2. 确认 `activeScreen` 弹窗那一刻就固定了，不会中途变 nil，`wanderRect` 必然有效
+3. 确认卡片根布局是 `.frame(width: 286, height: 292) + .padding(28)` 固定尺寸，`maxX` 不会算成负数
+4. 于是 `Wander.stepX` 不可能返回 nil、`setFrameOrigin` 必然被调用 —— 那为什么不动？
+
+问题出在**「谁移动了窗口」这个判断上**。`makePanelIfNeeded()` 给面板注册了 `NSWindow.didMoveNotification`，用来在用户拖走卡片时让自动行为让路。而游走是 30fps，**每帧 `setFrameOrigin` 都会触发这个通知**（`Tools/MoveNotifyTest` 实测：30 帧触发 30 次）。AppKit 对「定时器挪窗口」和「用户拖窗口」发的是同一个通知，通知里也不带任何来源字段。
+
+原来的处理函数只能拿 `NSEvent.pressedMouseButtons` 猜：
+
+```swift
+let dragging = (NSEvent.pressedMouseButtons & 1) == 1
+guard dragging else { return }
+...
+stopWandering()
+```
+
+**「按着鼠标」不等于「在拖窗口」。** 用户戳一下卡片、点完某处手指还没抬起来、甚至只是握着鼠标没松手——只要按键状态是 down，游走的第一帧移动就被判成拖拽，`stopWandering()` 直接停掉。而软提醒阶段没有任何恢复路径（那时的善后只处理强提醒的 `startChasing`），卡片就此永久定在原地。
+
+**决策**：改用**坐标比对**判断移动来源——位置正好等于上一帧自己设的那个点，就是自动移动；偏离才算用户拖的。
+
+```swift
+static func isAutoMove(actual: CGPoint, expected: CGPoint,
+                       tolerance: CGFloat = 1.5) -> Bool {
+    abs(actual.x - expected.x) <= tolerance && abs(actual.y - expected.y) <= tolerance
+}
+```
+
+**理由**：
+
+- **通知里没有的信息，不要用别的信号去猜。** 这里的「别的信号」和要判断的事之间没有因果关系，只是碰巧相关。猜错的代价是功能彻底失效，而且失效得无声无息——卡片就是不动，没有任何报错。
+- **坐标是我们自己写进去的，是唯一可靠的自证。** 容差 1.5px：比坐标取整误差大，比用户拖动的最小位移小。
+- **带插值的动画（`dodge`）没法逐帧比对**，因为中途坐标都不是终点。这段用时间窗 `autoMoveUntil` 整体免检，而不是硬凑一个判据。
+
+**代价**：多一个 `autoMovedTo` 状态要维护——每条 `setFrameOrigin` 都得同步写。漏写一处的后果和原来的 bug 一样。
+
+### 顺带修的两处，同一个病根
+
+排查时发现另外两条路径也会把游走停死、且不恢复：
+
+- `dodge()`（连戳三次躲开）里 `stopWandering()` 之后什么都不做。**用户想让卡片动，戳它反而让它不动了**——这是个后门
+- `handlePanelMoved` 的善后只处理 `urgency == .strong`（恢复追光标），软提醒被拖一次就永久定住
+
+### 更根本的一层：不要指望每条路径都记得善后
+
+停游走的路径有三条（拖走、躲闪、升强提醒），将来还可能加第四条。要求每条路径都自己恢复，漏一个就是「卡片定住」——而这恰好是用户最先能看见的故障。所以 `tick()` 里加了一句自愈：
+
+```swift
+if panelVisible, model.urgency == .soft, model.stage == .stretching,
+   prefs.wanderEnabled, wanderTimer == nil, chaseTimer == nil,
+   Date().timeIntervalSince(lastManualMoveAt) > 1.5 {
+    startWandering()
+}
+```
+
+每秒问一次「现在该不该动」，成本是一次判断。1.5 秒静默期留给手动干预：刚被拖过就先别抢回来。
+
+> 教训：**「状态」和「事实」要分清。** `pressedMouseButtons` 是一个状态，它推不出「正在拖窗口」这个事实；`autoMovedTo` 是我们自己写下的事实，可以反推出「这次移动不是我干的」。上一版（D-21 附近）也栽在同一个坑里——用 `idle` 时长去猜「人还在不在座位上」。**推测出来的状态可以调强调制，不能当开关，更不能当事实来源。**

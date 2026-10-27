@@ -40,11 +40,11 @@ open 歇会儿.app
 ├── package.sh                打 dmg（dist/歇会儿-<版本>.dmg）
 ├── packaging/
 │   └── 先看我.html            随 dmg 分发的首次打开说明（未签名分发的主力）
-├── Sources/                  2956 行，无第三方依赖
+├── Sources/                  3032 行，无第三方依赖
 │   ├── main.swift            NSApplication + .accessory（不占 Dock）
-│   ├── AppDelegate.swift     全部调度：喂判定机、弹窗、菜单、鼠标互动      (929)
+│   ├── AppDelegate.swift     全部调度：喂判定机、弹窗、菜单、鼠标互动      (990)
 │   ├── PresenceMachine.swift **判定机（纯函数，可测）**                     (217)
-│   ├── Wander.swift          游走步进与边界反弹（纯函数，可测）            (32)
+│   ├── Wander.swift          游走步进、边界反弹、移动来源判定（纯函数）    (47)
 │   ├── IdleClock.swift       读系统空闲秒数（零权限）                     (13)
 │   ├── Presence.swift        熄屏/锁屏检测，确凿判定离开（零权限）        (32)
 │   ├── SessionStore.swift    计时落盘，重启不归零                         (88)
@@ -65,6 +65,7 @@ open 歇会儿.app
 │   ├── run_tests.sh          判定机 + 游走步进的唯一入口（一条命令 3 秒跑完）
 │   ├── run_fullscreen_test.sh 全屏 Space 验证（会切一次全屏，6 秒）
 │   ├── run_wander_test.sh    游走真窗口验证（3 秒，看卡片真的会不会动）
+│   ├── run_move_notify_test.sh 窗口移动通知探针（来源判定改动的必跑项）
 │   ├── paths.py              素材路径的唯一出处（改目录结构只改这里）
 │   ├── normalize.py          白底抠透明 + 统一裁切
 │   ├── add_up_frames.py      反解裁切窗口 + render
@@ -79,6 +80,7 @@ open 歇会儿.app
 │   ├── presence_check.swift  熄屏/锁屏三信号探针（换判定依据时先跑它）
 │   ├── PresenceTest/         判定机时间轴用例（改判定逻辑必跑）
 │   ├── WanderTest/           游走位置在真实面板上是否生效
+│   ├── MoveNotifyTest/       窗口移动通知带不带来源（改 handlePanelMoved 必跑）
 │   ├── FullscreenTest/       全屏 Space 验证（改窗口层级/collectionBehavior 必跑）
 │   ├── AnimTest/             动作引擎行为测试
 │   ├── PokeTest/             验证开窗口拖动的面板上按钮仍能点
@@ -152,10 +154,18 @@ open 歇会儿.app
 showReminder()
   ├── 建 NSPanel（只建一次，之后复用）
   ├── animator.startLoop(MascotRoutine.variants(for: style))
-  ├── 定位到鼠标所在屏的右下角
+  ├── 定位到鼠标所在屏的右下角，同时记下 autoMovedTo
   ├── alpha 0 → 1 淡入（0.22s）
-  ├── startEscalation()    escalateSeconds 后开始游走
+  ├── startEscalation()    escalateSeconds 后 escalate()：切伸懒腰 + startWandering()
   └── startGazeTracking()  15fps 更新视线
+
+tick()（每秒）
+  └── 游走自愈：该动却停着就重装（兜住拖走/躲闪/升级留下的空洞）
+
+handlePanelMoved()（窗口移动通知）
+  ├── 是我们的坐标 → 自动移动，忽略
+  ├── 在 autoMoveUntil 时间窗内 → 插值动画，忽略
+  └── 都不是 → 用户拖走：停游走，1 秒后恢复
 
 hideReminder()
   ├── 停掉所有 timer
@@ -374,8 +384,9 @@ cp -R Resources/mascots /tmp/ws4/
 
 | 工具 | 断言什么 |
 |---|---|
-| `PresenceTest` | 判定机 16 组时间轴场景 + 游走步进（共 62 项检查，见上） |
+| `PresenceTest` | 判定机 16 组时间轴场景 + 游走步进 + 移动来源判定（共 69 项检查，见上） |
 | `WanderTest` | 游走在**真实面板**上生效：30fps、单帧 2px、3 秒走 180px、不越界。单测证明算术对，这个证明窗口真的会动 |
+| `MoveNotifyTest` | `setFrameOrigin` 会发 `didMoveNotification`（30 帧 30 次）、且通知里没有来源字段——「不能用鼠标键状态猜是谁移动的」这件事的事实依据 |
 | `FullscreenTest` | 真全屏下卡片是否浮得上来：在屏、跟 Space、层级、前后顺序 |
 | `AnimTest` | 循环在动（14s 内 ≥15 次切换）、出现伸懒腰/出拳、被戳后能接回循环、reset 后彻底静止、猫头鹰动作库不出拳 |
 | `PokeTest` | `mouseDownCanMoveWindow = true` 时头像 Button 仍能拿到点击 |
@@ -494,3 +505,5 @@ lipo -create -output 歇会儿 build/arm64 build/x86_64
 - **判定逻辑不进 `AppDelegate`**。只要一段逻辑不读时钟、不碰 UI，就抽成纯结构体放进 `Sources/`，并在 `Tools/PresenceTest` 里补一条时间轴用例
 - **别用「推测出来的状态」去拦确定性行为**。`inSilence` 是「手停了 5 分钟」，它推不出「人在忙」——读长文档、看视频、想事情都长这样。v0.12.1 的 bug 就是这么来的：拿它去拦「12 秒后开始游走」，结果用户坐到阈值时手已经停了，计时器压根不创建，卡片一动不动。**推测状态只配调强调制（比如「静默时不升级成强提醒」），不配当开关。**
 - **一次性 `Timer` 触发后不会自己清空引用**。`Timer(timeInterval:target:selector:repeats: false)` 跑完，属性里还挂着那个已失效的对象，所有 `timer == nil` 的判断都会失真。要么在回调开头置 nil，要么用 `invalidate()` 明确收尾
+- **`NSWindow.didMoveNotification` 分不清是程序挪的还是用户拖的**。游走 30fps，每帧 `setFrameOrigin` 都会发一次这个通知，通知里又不带来源字段（`Tools/MoveNotifyTest` 验证）。判别只能靠自己记的期望坐标（`Wander.isAutoMove` + `autoMovedTo`），**不要用 `NSEvent.pressedMouseButtons` 猜**——「按着鼠标」不等于「在拖窗口」。v0.12.2 就是栽在这上面：用户按着鼠标，游走第一帧被判成拖拽，停掉之后软提醒阶段没有任何恢复路径
+- **自动行为要有兜底重启**。停游走的路径有三条（拖走、躲闪、升强提醒），将来还可能加。让每条路径自己记得善后，漏一个就是「卡片定住」。`tick()` 里每秒问一次「现在该不该动」，退出条件写全（`panelVisible` / `urgency` / `stage` / `wanderEnabled` / 两个 timer 都为 nil / 过了手动干预静默期），成本一次判断

@@ -363,6 +363,46 @@ do {
           "maxX < minX 时应返回 nil")
 }
 
+// MARK: - 17. 窗口移动来源判定（Wander.isAutoMove）
+//
+// 这一组守的是一个真实故障：游走每帧 setFrameOrigin 都会触发
+// NSWindow.didMoveNotification，而通知里没有任何来源信息（Tools/MoveNotifyTest
+// 验证了这一点）。原来的处理函数用「鼠标键是否按下」猜是不是用户在拖，
+// 结果用户按着鼠标时游走被误杀、软提醒阶段还不恢复，卡片就定住了。
+
+do {
+    let here = CGPoint(x: 1200, y: 40)
+
+    // 17.1 位置完全一致 —— 这就是自己刚设的，必须认出来
+    check(Wander.isAutoMove(actual: here, expected: here),
+          "坐标一致时应判定为自动移动")
+
+    // 17.2 亚像素取整误差仍算自动移动
+    check(Wander.isAutoMove(actual: CGPoint(x: 1200.4, y: 39.7), expected: here),
+          "0.4px 的取整误差应容忍")
+
+    // 17.3 游走一帧 2px：位置比期望少了 2px，说明窗口被别的东西挪了
+    check(!Wander.isAutoMove(actual: CGPoint(x: 1198, y: 40), expected: here),
+          "偏离 2px 应判定为用户拖动")
+
+    // 17.4 纵向被拖走（横向没动）也要认出来
+    check(!Wander.isAutoMove(actual: CGPoint(x: 1200, y: 40 - 30), expected: here),
+          "只有 y 偏离也要判定为用户拖动")
+
+    // 17.5 初值哨兵：还没走过任何一帧时，任何真实坐标都不该被当成自动移动
+    let sentinel = CGPoint(x: CGFloat.greatestFiniteMagnitude,
+                           y: CGFloat.greatestFiniteMagnitude)
+    check(!Wander.isAutoMove(actual: here, expected: sentinel),
+          "哨兵值不该匹配任何真实坐标")
+
+    // 17.6 边界上的位置同样成立（贴右边界时最容易误判）
+    let edge = CGPoint(x: 1166, y: 4)
+    check(Wander.isAutoMove(actual: edge, expected: edge),
+          "贴边界的位置也要能认出来")
+    check(!Wander.isAutoMove(actual: CGPoint(x: edge.x - 2, y: edge.y), expected: edge),
+          "边界上偏 2px 仍应算拖动")
+}
+
 // MARK: - 汇总
 
 if failures.isEmpty {

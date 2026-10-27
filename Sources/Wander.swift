@@ -29,4 +29,19 @@ enum Wander {
         }
         return x
     }
+
+    /// 收到 `NSWindow.didMoveNotification` 时，判断这次移动是不是程序自己造成的。
+    ///
+    /// AppKit 对「定时器挪窗口」和「用户拖窗口」发的是同一个通知，通知里
+    /// 也没有任何来源字段（有测试：Tools/MoveNotifyTest）。游走 30fps，
+    /// 意味着每秒有 30 次「窗口被移动」需要甄别，只能用坐标反推：
+    /// 位置正好等于上一帧自己设的那个点，就是自动移动。
+    ///
+    /// 容差取 1.5px：比半个像素的坐标取整误差大，比用户拖动的最小位移小。
+    static func isAutoMove(actual: CGPoint,
+                           expected: CGPoint,
+                           tolerance: CGFloat = 1.5) -> Bool {
+        abs(actual.x - expected.x) <= tolerance
+            && abs(actual.y - expected.y) <= tolerance
+    }
 }

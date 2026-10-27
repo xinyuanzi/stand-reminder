@@ -23,8 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var gazeTimer: Timer?
     /// 最近的戳击时间，用来判断「连戳三次」
     private var pokeTimes: [Date] = []
-    /// 用户手动拖动过程中的最后移动时间，用来在松手后恢复自动行为
-    private var lastDraggedAt = Date.distantPast
+    /// 最后一次「用户动手干预」的时刻：拖动卡片、连戳到躲闪。
+    /// 自动行为（游走 / 追光标）在这之后的一小段静默期内不抢窗口位置，
+    /// 免得用户刚把它挪开、它自己又溜回去。
+    private var lastManualMoveAt = Date.distantPast
 
     /// 判定机：累计、离开结算、静默、待补发全在它里面，这里只负责把系统信号喂进去、
     /// 再按它吐出来的事实去弹窗。逻辑抽成纯函数是为了能跑时间轴用例（Tools/run_tests.sh）。
@@ -45,6 +47,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var wanderRect: NSRect = .zero
     /// 弹窗与游走共用的目标屏幕，避免中途切换导致跳屏
     private var activeScreen: NSScreen?
+
+    /// 程序自己把面板挪到的位置。
+    ///
+    /// AppKit 对「定时器挪窗口」和「用户拖窗口」发的是**同一个**
+    /// didMoveNotification，通知里也不带任何来源信息（有测试：
+    /// Tools/MoveNotifyTest）。游走是 30fps，等于每秒发 30 次这个通知，
+    /// 所以处理函数必须自己区分来源，否则每一帧都在猜「是不是用户在拖」。
+    ///
+    /// 判据就是这个坐标：位置正好等于我们上一帧设的点 → 是我自己挪的。
+    private var autoMovedTo = NSPoint(x: CGFloat.greatestFiniteMagnitude,
+                                      y: CGFloat.greatestFiniteMagnitude)
+    /// 带插值的动画（躲闪）期间，中途每一帧的坐标都不是终点，
+    /// 没法用坐标比对，只能按时间窗把这段时间的通知整体当噪音。
+    private var autoMoveUntil = Date.distantPast
 
     private var meetingBusy = false
     private var lastMeetingCheck = Date.distantPast
@@ -245,6 +261,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             upgradeToStrong()
         }
 
+        // 游走自愈：该动却停着，就重新装上。
+        //
+        // 停游走的路径有三条（用户拖走、连戳躲闪、升级强提醒），将来还可能
+        // 加第四条。要求每条路径都记得自己善后，漏一个就是「卡片定在原地
+        // 再也不动」—— 而这正是用户最先能看见的故障。与其靠每条路径自觉，
+        // 不如每秒问一次「现在该不该动」，成本是一次判断。
+        //
+        // 1.5 秒的静默期是留给手动干预的：刚被拖过就先别抢回来。
+        if panelVisible, model.urgency == .soft, model.stage == .stretching,
+           prefs.wanderEnabled, wanderTimer == nil, chaseTimer == nil,
+           Date().timeIntervalSince(lastManualMoveAt) > 1.5 {
+            startWandering()
+        }
+
         persistIfNeeded(now)
         updateStatus()
     }
@@ -347,6 +377,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                              y: visible.minY + panelMargin)
 
         p.setFrameOrigin(target)
+        // 自己摆的位置也要记账，否则这次定位会被 handlePanelMoved
+        // 当成用户拖拽，白白污染 lastManualMoveAt
+        autoMovedTo = target
         p.alphaValue = 0
         p.orderFrontRegardless()
 
@@ -531,7 +564,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let x = Wander.stepX(from: p.frame.origin.x,
                                    direction: &wanderDirection,
                                    minX: minX, maxX: maxX) else { return }
-        p.setFrameOrigin(NSPoint(x: x, y: wanderRect.minY + panelMargin))
+        let target = NSPoint(x: x, y: wanderRect.minY + panelMargin)
+        autoMovedTo = target
+        p.setFrameOrigin(target)
     }
 
     // MARK: - 鼠标互动
@@ -572,12 +607,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var x = p.frame.origin.x + dir * 78
         x = min(max(x, rect.minX + panelMargin), rect.maxX - p.frame.width - panelMargin)
 
+        // 插值动画期间坐标一路在变，比不到终点，只能整段时间免检
+        autoMoveUntil = Date().addingTimeInterval(0.5)
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.40
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             p.animator().setFrameOrigin(NSPoint(x: x, y: rect.minY + panelMargin))
         }
 
+        // 躲避也算一次「手动干预」：让 tick 的自愈等一会儿再来接手，
+        // 别把「躲开你」这个动作直接跳过。恢复本身交给 tick 统一负责，
+        // 这里不再单独排一个定时器 —— 恢复点越少越不容易漏。
+        lastManualMoveAt = Date()
         animator.react([(.punch1, 0.16), (.stand, 0.10), (.punch2, 0.16), (.sit, 0.34)])
         model.pokedLine = "躲开你"
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
@@ -603,7 +644,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func chaseStep() {
         guard let p = panel, p.isVisible,
-              Date().timeIntervalSince(lastDraggedAt) > 0.8 else { return }
+              Date().timeIntervalSince(lastManualMoveAt) > 0.8 else { return }
 
         let rect = (p.screen ?? activeScreen)?.visibleFrame ?? p.frame
         let mouse = NSEvent.mouseLocation
@@ -621,7 +662,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // 比例追随：越远走得越快，接近时自然减速，不会一顿一顿
         let step = max(-7.0, min(7.0, dx * 0.16))
-        p.setFrameOrigin(NSPoint(x: p.frame.origin.x + step, y: rect.minY + panelMargin))
+        let next = NSPoint(x: p.frame.origin.x + step, y: rect.minY + panelMargin)
+        autoMovedTo = next
+        p.setFrameOrigin(next)
     }
 
     // MARK: - 视线跟随
@@ -661,22 +704,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if model.gaze != next { model.gaze = next }
     }
 
-    /// 用户拖动面板时，自动行为要让路，否则会一边拖一边被拉走
+    /// 用户拖动面板时，自动行为要让路，否则会一边拖一边被拉走。
+    ///
+    /// 难点在于 AppKit 不告诉我们是谁移动的：游走每帧 `setFrameOrigin`
+    /// 也会走到这里（30fps，有测试 Tools/MoveNotifyTest）。原来这里用
+    /// `NSEvent.pressedMouseButtons` 猜「是不是在拖」，方向是错的 ——
+    /// 「按着鼠标」不等于「在拖窗口」。用户戳一下卡片、或者点完某处手还没
+    /// 抬起来，游走的第一帧就会被当成拖拽，`stopWandering()` 直接把游走
+    /// 停掉；而软提醒阶段没有任何恢复路径，卡片就此定在原地再也不动。
+    /// 用户报的「12 秒后卡片没游走」就是这个。
+    ///
+    /// 现在改用坐标比对：位置正是上一帧我们自己设的那个点，就是自动移动。
     @objc private func handlePanelMoved() {
         guard let p = panel, p.isVisible else { return }
-        let dragging = (NSEvent.pressedMouseButtons & 1) == 1
-        guard dragging else { return }
+        guard Date() >= autoMoveUntil else { return }
+        guard !Wander.isAutoMove(actual: p.frame.origin, expected: autoMovedTo) else { return }
 
-        lastDraggedAt = Date()
+        // 到这里才真的是用户在拖
+        lastManualMoveAt = Date()
         stopWandering()
         stopChasing()
 
-        // 松手 1 秒后恢复强提醒的追光标（软提醒本来就不追）
+        // 松手 1 秒后恢复自动行为。强提醒的「追光标」只有这里能恢复，
+        // tick 的自愈只管软提醒阶段的游走，所以这段不能省。
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            guard let self else { return }
-            guard Date().timeIntervalSince(self.lastDraggedAt) >= 0.9 else { return }
-            if self.panelVisible, self.model.urgency == .strong {
+            guard let self, self.panelVisible else { return }
+            guard Date().timeIntervalSince(self.lastManualMoveAt) >= 0.9 else { return }
+            if self.model.urgency == .strong {
                 self.startChasing()
+            } else if self.model.stage == .stretching {
+                // 软提醒阶段被拖走也要接着游走，否则碰一下卡片就永久定住。
+                // 但只有**已经升级过**（12 秒无响应、进入伸懒腰）才恢复 ——
+                // 刚弹出来的头 12 秒本来就不该动，拖它一下也不该提前开跑。
+                // 这一步等于提前替 tick 的自愈干了，省掉最多 1 秒的静止感。
+                self.startWandering()
             }
         }
     }

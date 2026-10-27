@@ -58,7 +58,7 @@ final class ReminderPanel: NSPanel {
 
 两个周期故意不同频：**浮沉 2.9s，横移 5.3s**。同频的话两个动作会锁相，看起来像机械抖动。
 
-**只能用平移，不能用缩放和旋转。** 缩放（哪怕 1.022）和旋转（哪怕 ±0.9°）会让整张图每一帧都重新插值，在 126pt 里表现为整体发虚、毛发边缘出现第二层轮廓。平移在整数像素下只是搬纹理，零重采样。幅度取整数（1pt / 2pt），@2x 下正好落在物理像素上。详见 [D-17](#d-17-待机层不能用缩放和旋转)。
+**只能用平移，不能用缩放和旋转。** 缩放（哪怕 1.022）和旋转（哪怕 ±0.9°）会让整张图每一帧都重新插值，在 126pt 里表现为整体发虚、毛发边缘出现第二层轮廓。平移在整数像素下只是搬纹理，零重采样。幅度取整数（1pt / 2pt），@2x 下正好落在物理像素上。详见 [D-17](#d-17--待机层不能用缩放和旋转)。
 
 **理由**：「活着」的信号不是动作大，而是**永不完全静止**。三层之后，即使一次大动作都不播，动物也在动。
 
@@ -321,3 +321,53 @@ if idle >= prefs.awayResetSeconds {        // 真起身走开 → 清零 + 可�
 **没做的**：没把 `focusSeconds` 落盘。重启归零仍在，属已知行为，已写进 README 的 FAQ。
 
 > 教训：**凡是用「零输入」推断「有人/没人」的判定，都要问一句「这个人在座位上但手停着的情况有多常见」。** 久坐提醒、在线状态、自动锁屏、离开打卡——全踩这个坑。
+
+---
+
+## D-19 · 用屏幕状态替代时长猜测
+
+**背景**：D-18 把离开判定拆成「冻结」与「归零」两档，但两档的边界仍然只是时长——5 分钟。这是个假边界：**传感器只有一个读数，而读数背后的现实有四种**（读长文档、盯着问题想、起身倒水、开会听人讲），时长分不出来。
+
+后果很直接：看一集 40 分钟的剧，`idle` 连续超过 5 分钟，判成离开、清零。而那 40 分钟人一直坐在椅子上——**正是这个工具最该提醒的久坐**。阈值调到 30 分钟也没用，只是把误判推迟。
+
+**决策**：把「确凿离开」交给屏幕状态，时长退回去只管「冻结」。
+
+```swift
+let away = Presence.isAway        // 熄屏 || 锁屏 || 不在控制台
+if away || idle >= prefs.awayResetSeconds { 清零 }
+else if idle >= prefs.restSeconds { awayPaused = true }   // 冻结
+else { focusSeconds += 1 }
+```
+
+```swift
+static var isAway: Bool { displayAsleep || sessionInactive }
+
+static var displayAsleep: Bool { CGDisplayIsAsleep(CGMainDisplayID()) != 0 }
+
+static var sessionInactive: Bool {
+    guard let info = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+    if let locked = info["CGSSessionScreenIsLocked"] as? Bool, locked { return true }
+    if let onConsole = info["kCGSSessionOnConsoleKey"] as? Bool, !onConsole { return true }
+    return false
+}
+```
+
+**理由**：
+
+- **「屏幕亮不亮」是系统自己的离开判定**，比我们拍的阈值可信。系统按用户设的 `displaysleep`（本机 10 分钟）熄屏，我们直接借用这个结论，不用自己再猜一遍。
+- **看视频和开会时屏幕一定亮着**。播放器会持有 prevent-display-sleep 断言，会议软件同理。所以这两类最容易被误判的场景，天然被排除在「归零」之外。
+- **两条 API 都不需要授权**。不碰屏幕内容、不碰辅助功能，只问「屏熄了吗 / 锁了吗」，隐私成本和 `secondsSinceLastEventType` 同级。
+- **错误代价仍然不对称**。熄屏/锁屏漏判（系统没熄屏就离开了）→ 多记一段坐着时间，回来弹一次提醒，可恢复；时长误判（看视频被清零）→ 抹掉真实久坐，不可恢复。
+
+**为什么还要订阅系统通知**：只靠 tick 轮询不够。屏幕睡着时 App Nap 可能把定时器压慢甚至压停，等你回来第一次 tick，`isAway` 已经变回 false——「睡着」这个状态从头到尾没被看见，该清的一次也没清。所以 `screensDidSleepNotification` 一到就立刻处理，事件驱动不看运气。`screensDidWakeNotification` 也挂同一个处理，纯粹当漏事件的补偿（此时 `focusSeconds` 已是 0，重复调用是空操作）。
+
+顺带把 `handleWake` 和 `handleAway` 合并成一个入口：合盖睡眠、熄屏、锁屏都是「人走了」，没理由走两套代码、两种打卡口径。
+
+**代价**：
+
+- `awayMinutes` 的语义变了。它原来是主力判定，现在只是「用户把屏幕设成永不休眠」时的兜底，默认值从 5 提到 30——**5 会先于系统息屏（10 分钟）触发，等于把 D-18/D-19 想修的问题原样带回来**。设置项改名为「兜底归零」。
+- 熄屏这个信号在**合盖**场景拿不到（系统直接睡眠，`tick` 停摆），靠已有的 `didWakeNotification` 兜。两条路都指向同一次清零，不冲突。
+
+**怎么验证**：`CGDisplayIsAsleep` 只在屏真的熄了才返回 1，日常开发时测不到真分支。写了一个独立小工具打印 `displayAsleep` / `locked` / `onConsole` 三个值，熄屏和锁屏各试一次即可——比反复重启 app 快。
+
+> 教训：**别用「代理指标」的阈值去替代「直接信号」。** 时长是「在线/离开」的代理，屏幕状态几乎是直接信号。代理指标永远只是猜，一旦有更直接的信号可用，就该换掉，而不是继续调阈值——调阈值只是把猜错的位置挪一挪。

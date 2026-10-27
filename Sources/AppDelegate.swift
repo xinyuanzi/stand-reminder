@@ -85,6 +85,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self, selector: #selector(handleWake),
             name: NSWorkspace.didWakeNotification, object: nil
         )
+        // 熄屏/唤醒事件是「确凿离开」的补充：不能只靠每秒 tick 轮询，
+        // 屏幕睡着时 App Nap 可能把定时器压慢，醒来第一次 tick 就已经看不到「睡着」这个状态了。
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(handleAway),
+            name: NSWorkspace.screensDidSleepNotification, object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(handleAway),
+            name: NSWorkspace.screensDidWakeNotification, object: nil
+        )
 
         // 首次启动直接把设置窗口打开，否则用户只看到菜单栏多了个图标，不知道这是什么
         if !UserDefaults.standard.bool(forKey: "hasLaunchedBefore") {
@@ -152,7 +162,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tickTimer = t
     }
 
+    /// 系统睡眠唤醒 = 人走了又回来，和熄屏/锁屏同一口径
     @objc private func handleWake() {
+        handleAway()
+    }
+
+    /// 确凿离开：熄屏、锁屏、系统唤醒都走这一条，tick 与系统通知共用同一口径。
+    /// 只有「坐够了软提醒阈值之后才离开」才算一次真正的休息——
+    /// 随手离开一分钟也能刷天数的话，解锁就失去意义了。
+    @objc private func handleAway() {
+        awayPaused = false
+        guard focusSeconds > 0 else { return }
+        if focusSeconds >= Double(prefs.focusMinutes * 60) {
+            recordHabit()
+        }
         focusSeconds = 0
         hideReminder()
         updateStatus()
@@ -163,24 +186,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshMeetingState()
 
         let idle = IdleClock.seconds
+        // 熄屏 / 锁屏 = 确凿离开。比拿时长猜人可靠得多：屏幕亮着的时候，
+        // 看视频、开会听讲、盯着问题想，人都还在座位上。
+        let away = Presence.isAway
         let softLimit = Double(prefs.focusMinutes * 60)
         let strongLimit = Double(max(prefs.strongMinutes, prefs.focusMinutes) * 60)
 
-        // 三种状态分开处理，别用「一个阈值管两件事」：
-        //   idle <  暂停阈值        → 人在电脑前，累加
-        //   idle >= 真正离开阈值     → 真起身了，清零并可能计一次休息
-        //   两者之间                → 只是手停了（看文档/看视频/开会），暂停累加但保留进度
-        if idle >= prefs.awayResetSeconds {
-            awayPaused = false
-            if focusSeconds > 0 {
-                // 只有「坐够了软提醒阈值之后才离开」才算一次真正的休息。
-                // 随手离开一分钟也能刷天数的话，解锁就失去意义了。
-                if focusSeconds >= softLimit {
-                    recordHabit()
-                }
-                focusSeconds = 0
-                hideReminder()
-            }
+        // 优先级从「确凿」到「猜测」：
+        //   熄屏 / 锁屏            → 真离开，立刻归零
+        //   屏幕亮着但没碰键鼠      → 冻结，人还在座位上
+        //   屏幕永不休眠时的兜底    → 只能退回去用超长时长判
+        if away || idle >= prefs.awayResetSeconds {
+            handleAway()
         } else if idle >= prefs.restSeconds {
             awayPaused = true
         } else {
@@ -189,7 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // 人不在座位上就别弹（不然弹窗自己在底下游走半晌，你回来只看到残留动画）
-        if !panelVisible, focusSeconds >= softLimit, !awayPaused,
+        if !panelVisible, focusSeconds >= softLimit, !awayPaused, !away,
            !isPaused(), !prefs.inQuietHours(), todayCount < prefs.dailyCap {
             if prefs.meetingAware && meetingBusy {
                 deferredPending = true
@@ -199,7 +216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // 会议结束，立刻补发欠下的提醒
-        if deferredPending, !meetingBusy, !awayPaused, !panelVisible,
+        if deferredPending, !meetingBusy, !awayPaused, !away, !panelVisible,
            !isPaused(), !prefs.inQuietHours() {
             deferredPending = false
             showReminder(deferred: true)

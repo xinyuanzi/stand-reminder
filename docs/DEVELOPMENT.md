@@ -37,18 +37,19 @@ open 歇会儿.app
 ```
 .
 ├── build.sh                  构建脚本
-├── Sources/                  2100 行，无第三方依赖
+├── Sources/                  2231 行，无第三方依赖
 │   ├── main.swift            NSApplication + .accessory（不占 Dock）
-│   ├── AppDelegate.swift     全部调度：计时、判定、弹窗、菜单、鼠标互动  (770)
+│   ├── AppDelegate.swift     全部调度：计时、判定、弹窗、菜单、鼠标互动  (786)
 │   ├── IdleClock.swift       读系统空闲秒数（零权限）                     (13)
-│   ├── Prefs.swift           UserDefaults 配置 + 免打扰时段判定           (94)
+│   ├── Presence.swift        熄屏/锁屏检测，确凿判定离开（零权限）        (32)
+│   ├── Prefs.swift           UserDefaults 配置 + 免打扰时段判定           (108)
 │   ├── Habits.swift          打卡、连续天数、形象解锁规则                (147)
 │   ├── LaunchAtLogin.swift   LaunchAgent 开机自启                         (69)
 │   ├── MeetingDetector.swift 摄像头/麦克风占用检测                        (54)
 │   ├── ReminderPanel.swift   NSPanel 子类，禁止成为 key/main 窗口        (7)
 │   ├── MascotAnimator.swift  姿态枚举、动作库、三层动画引擎              (365)
-│   ├── MascotCard.swift      SwiftUI 卡片视图 + 表情层覆盖               (382)
-│   └── SettingsView.swift    SwiftUI 设置页「Form」                      (214)
+│   ├── MascotCard.swift      SwiftUI 卡片视图 + 表情层覆盖               (405)
+│   └── SettingsView.swift    SwiftUI 设置页「Form」                      (238)
 ├── Resources/
 │   ├── Info.plist
 │   ├── mascots/{style}/{pose}.png  成品素材（512×512 透明 PNG）
@@ -62,6 +63,7 @@ open 歇会儿.app
 │   ├── fixed_align.py        对齐③：固定取景（推荐）
 │   ├── warm_align.py         实验失败，留作反向教材
 │   ├── group_align.py        按头顶宽度定缩放
+│   ├── presence_check.swift  熄屏/锁屏三信号探针（换判定依据时先跑它）
 │   ├── AnimTest/             动作引擎行为测试
 │   ├── PokeTest/             验证开窗口拖动的面板上按钮仍能点
 │   ├── GazeTest/             验证视线切换真的换图
@@ -80,14 +82,16 @@ open 歇会儿.app
 ```
 每秒 tick (AppDelegate.tick)
 │
-├── IdleClock.seconds ──→ 三档判定
-│        │                  ├─ idle >= awayResetSeconds（默认 5min）：清零，够阈值则打卡
+├── Presence.isAway（熄屏 / 锁屏）──→ 确凿离开：清零，够阈值则打卡
+│
+├── IdleClock.seconds ──→ 屏幕亮着时的三档判定
+│        │                  ├─ idle >= awayResetSeconds（兜底 30min）：清零
 │        │                  ├─ idle >= restSeconds（默认 1min）：awayPaused = true，冻结累加
 │        │                  └─ 否则：focusSeconds += 1
 │
 ├── focusSeconds >= softMinutes ──→ 该弹了？
 │        ├── 在会议中？→ deferredPending = true（会后补发）
-│        ├── 免打扰 / 暂停 / 今日已满 / 暂离中？→ 不弹
+│        ├── 免打扰 / 暂停 / 今日已满 / 暂离中 / 已离开？→ 不弹
 │        └── 否则 showReminder()
 │
 └── 已弹 + focusSeconds >= strongMinutes ──→ upgradeToStrong()

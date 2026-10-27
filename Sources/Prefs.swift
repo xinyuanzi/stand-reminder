@@ -20,12 +20,13 @@ final class Prefs: ObservableObject {
         didSet { store.set(restSeconds, forKey: "restSeconds") }
     }
 
-    /// 真正离开的判定：超过这个分钟数才算起身走开，累计清零并计一次休息
+    /// 兜底归零：屏幕永不休眠时（拿不到熄屏信号），只能靠时长判断离开。
+    /// 平时用不到——熄屏、锁屏会直接触发归零。
     @Published var awayMinutes: Int {
         didSet { store.set(awayMinutes, forKey: "awayMinutes") }
     }
 
-    /// 真正离开的秒数阈值。强制比暂停阈值大，防止两个值被调反后互相打架。
+    /// 兜底归零的秒数阈值。强制比冻结阈值大，防止两个值被调反后互相打架。
     var awayResetSeconds: Double {
         max(Double(awayMinutes * 60), restSeconds + 60)
     }
@@ -81,7 +82,7 @@ final class Prefs: ObservableObject {
         focusMinutes = store.object(forKey: "focusMinutes") as? Int ?? 60
         snoozeMinutes = store.object(forKey: "snoozeMinutes") as? Int ?? 5
         restSeconds = store.object(forKey: "restSeconds") as? Double ?? 60
-        awayMinutes = store.object(forKey: "awayMinutes") as? Int ?? 5
+        awayMinutes = store.object(forKey: "awayMinutes") as? Int ?? 30
         strongMinutes = store.object(forKey: "strongMinutes") as? Int ?? 90
         meetingAware = store.object(forKey: "meetingAware") as? Bool ?? true
         dailyCap = store.object(forKey: "dailyCap") as? Int ?? 8

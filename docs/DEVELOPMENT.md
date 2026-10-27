@@ -84,18 +84,17 @@ open 歇会儿.app
 │
 ├── Presence.isAway（熄屏 / 锁屏）──→ 持续 ≥ 30s 才算离开：清零 + 打卡；< 30s 不动
 │
-├── IdleClock.seconds ──→ 屏幕亮着时的三档判定
-│        │                  ├─ idle >= awayResetSeconds（兜底 30min）：清零
-│        │                  ├─ idle >= restSeconds 且不在会议：awayPaused = true，冻结累加
-│        │                  ├─ idle >= restSeconds 且会议中：照常 += 1，只是不弹窗
-│        │                  └─ 否则：focusSeconds += 1
+├── 屏幕亮着 ──→ focusSeconds += 1（手停不停都算，人还在座位上）
+│        └─ idle >= awayResetSeconds（兜底 30min）──→ 清零，仅屏幕永不休眠时生效
 │
 ├── focusSeconds >= softMinutes ──→ 该弹了？
-│        ├── 在会议中？→ deferredPending = true（会后补发）
-│        ├── 免打扰 / 暂停 / 今日已满 / 暂离中 / 已离开？→ 不弹
+│        ├── 离开中 / 会议中（摄像头麦克风占用）？→ deferredPending = true（恢复后补发）
+│        ├── 免打扰 / 暂停 / 今日已满？→ 不弹
 │        └── 否则 showReminder()
 │
-└── 已弹 + focusSeconds >= strongMinutes ──→ upgradeToStrong()
+├── 静默（idle >= silentSeconds 且不在会议）──→ 只压制升级：不起升级计时、不追鼠标
+│
+└── 已弹 + focusSeconds >= strongMinutes + 非静默 ──→ upgradeToStrong()
 ```
 
 **弹窗的生命周期**

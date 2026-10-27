@@ -26,8 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastDraggedAt = Date.distantPast
 
     private var focusSeconds: Double = 0
-    /// 手停了但人还在座位上（idle 介于冻结阈值与开会判定之间），此时冻结累加、保留进度
-    private var awayPaused = false
+    /// 静默中：手停了很久、又没有「在开会」的正向证据。照常计时，只是先不打断。
+    private var inSilence = false
 
     /// 离开必须「持续」够久才算数。锁屏两秒、误触熄屏 → 不该抹掉两小时的累计。
     private static let awayMinSeconds: TimeInterval = 30
@@ -211,7 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 只有「坐够了软提醒阈值之后才离开」才算一次真正的休息——
     /// 随手离开一分钟也能刷天数的话，解锁就失去意义了。
     private func resetForAway() {
-        awayPaused = false
+        inSilence = false
         guard focusSeconds > 0 else { return }
         if focusSeconds >= Double(prefs.focusMinutes * 60) {
             recordHabit()
@@ -225,32 +225,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         resetDayIfNeeded()
 
         let idle = IdleClock.seconds
-        // 熄屏 / 锁屏 = 确凿离开。比拿时长猜人可靠得多：屏幕亮着的时候，
-        // 看视频、开会听讲、盯着问题想，人都还在座位上。
+        // 熄屏 / 锁屏 = 确凿离开。比拿时长猜人可靠得多。
         let away = Presence.isAway
         refreshMeetingState(idle: idle, away: away)
 
         let softLimit = Double(prefs.focusMinutes * 60)
         let strongLimit = Double(max(prefs.strongMinutes, prefs.focusMinutes) * 60)
+        let inMeeting = prefs.meetingAware && meetingBusy
 
         // 到点才清零：离开没够 awayMinSeconds 就回来了，什么都不动
         observePresence(away: away)
 
-        if away {
-            // 离开中不累加，清零交给 observePresence 按持续时长处理
-            awayPaused = false
-        } else if idle >= prefs.restSeconds {
-            // 手停了。但如果是在开会/视频通话，人就在座位上坐着——
-            // 那正是最容易一坐两小时的场景，冻住等于把它整段漏掉。
-            // 所以照常计时，只是不弹窗（会后补发）。
-            if prefs.meetingAware && meetingBusy {
-                awayPaused = false
-                focusSeconds += 1
-            } else {
-                awayPaused = true
-            }
-        } else {
-            awayPaused = false
+        // 屏幕亮着就一直记账。
+        // 冻结是上一版的错误：手停三分钟跟旁边人说句话、读文档停下来想，
+        // 人明明还在座位上，冻住等于把这段整段漏掉——而屏幕没熄这件事本身
+        // 就是系统在说「人还在」（它按 10 分钟无输入才熄屏）。
+        if !away {
             focusSeconds += 1
         }
 
@@ -259,24 +249,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             resetForAway()
         }
 
-        // 人不在座位上就别弹（不然弹窗自己在底下游走半晌，你回来只看到残留动画）
-        if !panelVisible, focusSeconds >= softLimit, !awayPaused, !away,
+        // 静默 = 手停了很久，但**没有**任何「在开会」的正向证据。
+        // 不拿它当「人走了」——那正是上一版冻结的错误。它只当作**克制**的理由：
+        // 提醒照弹，但不升级、不追鼠标。看视频、线下开会时别被追着跑。
+        inSilence = !away && !inMeeting && idle >= prefs.silentSeconds
+        // 只有确凿证据（熄屏/锁屏、摄像头麦克风占用）才完全压住弹窗，其余照常提醒。
+        let holdBack = away || inMeeting
+
+        if !panelVisible, focusSeconds >= softLimit,
            !isPaused(), !prefs.inQuietHours(), todayCount < prefs.dailyCap {
-            if prefs.meetingAware && meetingBusy {
+            if holdBack {
+                // 离开 / 开会：记账不停，只是不打断，恢复后补发
                 deferredPending = true
             } else {
-                showReminder()
+                let wasDeferred = deferredPending
+                deferredPending = false
+                showReminder(deferred: wasDeferred)
             }
         }
 
-        // 会议结束，立刻补发欠下的提醒
-        if deferredPending, !meetingBusy, !awayPaused, !away, !panelVisible,
-           !isPaused(), !prefs.inQuietHours() {
-            deferredPending = false
-            showReminder(deferred: true)
+        // 静默结束（手回来了）补上克制期间欠下的升级计时
+        if panelVisible, !inSilence, escalateTimer == nil,
+           model.urgency == .soft, model.stage == .sitting {
+            startEscalation()
         }
 
-        if panelVisible, model.urgency == .soft, focusSeconds >= strongLimit {
+        if panelVisible, model.urgency == .soft, focusSeconds >= strongLimit, !inSilence {
             upgradeToStrong()
         }
 
@@ -293,7 +291,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let nearLimit = focusSeconds >= Double(prefs.focusMinutes * 60) - 180
-        let handStopped = !away && idle >= prefs.restSeconds
+        let handStopped = !away && idle >= prefs.silentSeconds
         guard nearLimit || deferredPending || panelVisible || handStopped else {
             meetingBusy = false
             return
@@ -361,7 +359,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             p.animator().alphaValue = 1
         }
 
-        startEscalation()
+        // 静默时不起升级计时：卡片安静待着，不追鼠标也不转暖色。
+        // 手一回来再补上（见 tick 里的补装逻辑）。
+        if !inSilence { startEscalation() }
         startGazeTracking()
         updateStatus()
     }
@@ -452,6 +452,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             recordHabit()
         }
         focusSeconds = 0
+        deferredPending = false
         hideReminder()
     }
 
@@ -459,6 +460,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let limit = Double(prefs.focusMinutes * 60)
         let back = Double(prefs.snoozeMinutes * 60)
         focusSeconds = max(0, limit - back)
+        deferredPending = false
         hideReminder()
     }
 
@@ -698,9 +700,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lastStatusTitle = title
         }
 
-        // 「暂离」不是故障，是手停了但人还在座位上——明说出来，省得又以为计时坏了。
+        // 静默不是故障，是手停了但人还在座位上——明说出来，省得又以为计时坏了。
         // 会议中数字还在涨，同样要说清楚为什么。
-        let awayNote = awayPaused ? " · 暂离暂停" : (meetingBusy ? " · 会议中照常计时" : "")
+        let awayNote = inSilence ? " · 静默中（提醒不升级）"
+            : (meetingBusy ? " · 会议中照常计时" : "")
         focusMenuItem?.title = "已连续专注 \(minutes) 分钟\(awayNote)（软 \(prefs.focusMinutes) / 强 \(prefs.strongMinutes)）"
         countMenuItem?.title = "今日已提醒 \(todayCount) / \(prefs.dailyCap) 次"
 

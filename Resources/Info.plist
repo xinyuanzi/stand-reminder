@@ -2,27 +2,27 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>
-    <string>歇会儿</string>
-    <key>CFBundleDisplayName</key>
-    <string>歇会儿</string>
-    <key>CFBundleIdentifier</key>
-    <string>cn.yuou.xiehuier</string>
-    <key>CFBundleExecutable</key>
-    <string>XieHuiEr</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>0.9.4</string>
-    <key>CFBundleVersion</key>
-    <string>13</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSHumanReadableCopyright</key>
-    <string>渝欧数智</string>
+	<key>CFBundleDisplayName</key>
+	<string>歇会儿</string>
+	<key>CFBundleExecutable</key>
+	<string>XieHuiEr</string>
+	<key>CFBundleIdentifier</key>
+	<string>cn.yuou.xiehuier</string>
+	<key>CFBundleName</key>
+	<string>歇会儿</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.9.5</string>
+	<key>CFBundleVersion</key>
+	<string>14</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>渝欧数智</string>
 </dict>
 </plist>

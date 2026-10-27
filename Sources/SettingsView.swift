@@ -86,11 +86,8 @@ struct SettingsView: View {
                 Stepper(value: $prefs.escalateSeconds, in: 5...60, step: 1) {
                     labeled("升级为起身动作", "\(Int(prefs.escalateSeconds)) 秒无响应后切换姿态")
                 }
-                Stepper(value: Binding(
-                    get: { Int(prefs.restSeconds / 60) },
-                    set: { prefs.restSeconds = Double($0 * 60) }
-                ), in: 1...15) {
-                    labeled("冻结计时", "\(Int(prefs.restSeconds / 60)) 分钟没碰键鼠就暂停累加（不清零；开会/通话除外）")
+                Stepper(value: $prefs.silentMinutes, in: 1...30, step: 1) {
+                    labeled("静默判定", "\(prefs.silentMinutes) 分钟没碰键鼠算静默：提醒照弹，但不再升级、不追鼠标")
                 }
                 Stepper(value: $prefs.awayMinutes, in: 10...120, step: 5) {
                     labeled("兜底归零", "熄屏或锁屏立刻归零；这条只在屏幕永不休眠时生效（\(prefs.awayMinutes) 分钟）")

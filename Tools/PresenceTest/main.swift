@@ -271,6 +271,33 @@ do {
     check(near(m.focusSeconds, 600), "跨零点不该打断这一轮的专注时长，实际 \(m.focusSeconds)")
 }
 
+// MARK: - 14. 续上计时之后，到点仍然要弹
+
+do {
+    var m = PresenceMachine()
+    m.adopt(focusSeconds: 1800, daySitSeconds: 5400)
+    check(near(m.focusSeconds, 1800), "续上 1800 秒，实际 \(m.focusSeconds)")
+    check(near(m.daySitSeconds, 5400), "续上今日累计 5400 秒，实际 \(m.daySitSeconds)")
+
+    var now = 0.0
+    var shows = 0
+    for _ in 1...1800 {
+        now += 1
+        if m.step(now: now, input: beat(now), thresholds: T).shouldShowReminder { shows += 1 }
+    }
+    check(shows == 1, "续上 30 分钟后再坐 30 分钟必须弹（续上不能把提醒吞掉），实际 \(shows) 次")
+}
+
+// MARK: - 15. 续上的数已经超过阈值：下一步就该弹，而不是等下个 60 分钟
+
+do {
+    var m = PresenceMachine()
+    m.adopt(focusSeconds: 3700, daySitSeconds: 3700)
+    let e = m.step(now: 1, input: beat(1), thresholds: T)
+    check(e.shouldShowReminder, "续上的数已经过阈值，启动后应立刻提醒一次")
+    check(!e.reminderIsDeferred, "这条不该带补发标记")
+}
+
 // MARK: - 汇总
 
 if failures.isEmpty {

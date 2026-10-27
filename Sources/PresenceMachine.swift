@@ -103,7 +103,9 @@ struct PresenceMachine: Equatable {
         inSilence = false
         inLongSilence = false
         deferredPending = false
-        reminderFired = focusSeconds > 0
+        // 刚启动时屏幕上没有任何卡片，「本轮已弹过」必须归零。
+        // 否则续上 30 分钟之后，再坐满 60 分钟也不会弹——续上反而把提醒吞掉了。
+        reminderFired = false
     }
 
     /// 新的一天：只清当日累计，专注时长属于「这一轮」，跨零点不该断

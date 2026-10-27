@@ -36,7 +36,7 @@ v0.9.2–v0.9.5 连续四个版本都在修同一处判定，用户每次反馈�
 | GitHub Actions ✅ | tag 触发编译 → 打包 → 冒烟检查 → draft Release |
 | 代码签名 + 公证 ⏳ | 还没做。当前是临时签名（`codesign -s -`），别人下载后要走 README 的 `xattr` 绕行。要不要花 ¥688/年买 Developer 账号，等你定 |
 | 英文界面 ⏳ | 文案全部硬编码在 SwiftUI 里，先抽 `Localizable.strings`（中英），再顺势跟随系统语言。工作量大，单独一轮 |
-| README 首屏 GIF ⏳ | 静态截图看不出「动作连续」这个卖点，需要一段 6–8 秒录屏。`screencapture` 在这台机器上没权限，得你手动录一段 |
+| README 首屏 GIF ✅ | `Tools/GifShot` + `make_hero_gif.py`：真窗口抓一轮全套三幕（100 帧 / 10s），460px、128 色、1.4MB。不需要 `screencapture` 权限 |
 
 ---
 

@@ -70,13 +70,15 @@ open 歇会儿.app
 │   ├── warm_align.py         实验失败，留作反向教材
 │   ├── group_align.py        按头顶宽度定缩放
 │   ├── make_icon.py          生成 AppIcon.icns（猫头鹰头部特写）
+│   ├── make_hero_gif.py      帧序 → README 首屏 GIF（铺底 + 压色 + 控体积）
 │   ├── presence_check.swift  熄屏/锁屏三信号探针（换判定依据时先跑它）
 │   ├── PresenceTest/         判定机时间轴用例（改判定逻辑必跑）
 │   ├── FullscreenTest/       全屏 Space 验证（改窗口层级/collectionBehavior 必跑）
 │   ├── AnimTest/             动作引擎行为测试
 │   ├── PokeTest/             验证开窗口拖动的面板上按钮仍能点
 │   ├── GazeTest/             验证视线切换真的换图
-│   ├── WindowShot/           真窗口取图（含帧序）
+│   ├── WindowShot/           真窗口取图（单张，cacheDisplay）
+│   ├── GifShot/              真窗口抓帧序（CGWindowListCreateImage，能录到插值动画）
 │   ├── Preview/              离屏渲染设置页
 │   └── LoginTest/            自启 plist 验证
 └── docs/
@@ -282,6 +284,28 @@ ffmpeg -y -framerate 12.5 -i /tmp/strip_%02d.png -c:v libx264 -pix_fmt yuv420p o
 
 `12.5 = 1/0.08`。**采样间隔要短于最短的动作节拍**（振翅是 0.12~0.17s，所以用 0.08s），否则会混叠，看起来像掉帧。
 
+### 5.7 出 README 首屏 GIF
+
+```bash
+# ① 抓帧（100 帧 × 0.1s = 一整轮全套三幕）
+swiftc -O -target arm64-apple-macos13.0 -framework AppKit -framework SwiftUI \
+  Sources/MascotAnimator.swift Sources/Prefs.swift Sources/Habits.swift \
+  Sources/MascotCard.swift Sources/ReminderPanel.swift \
+  Tools/GifShot/main.swift -o /tmp/gs/run
+cp -R Resources/mascots /tmp/gs/
+/tmp/gs/run d 100 0.1 /tmp/gifshot full
+
+# ② 拼 GIF
+python3 Tools/make_hero_gif.py /tmp/gifshot docs/images/card-routine.gif
+```
+
+两个必须知道的点：
+
+- **不能用 `WindowShot` 的 `cacheDisplay` 抓 GIF**。它抓的是**模型值**，而待机层的呼吸/摆动全是 `repeatForever` 的 CA 插值——模型值永远不变，抓出来只有姿势切换、中间一片静止，做成 GIF 比真实效果还差。`GifShot` 改用 `CGWindowListCreateImage` 读窗口合成结果，插值状态才算数（抓自己的窗口不需要屏幕录制权限）。
+- **`ReminderModel.visible` 默认是 `false`**，而待机动画在 `onAppear` 里要靠它才启动。测试工具忘了设这一行，抓出来的就是幻灯片。设了之后帧间差异立刻从「大量 0」变成每帧都有几百到几千像素。
+
+GIF 体积控制在 4MB 以内（460px 宽 / 128 色 / 10fps，100 帧实测 1.4MB）。超了就降宽度，别降帧率——降帧率会让振翅那几下糊成一团。
+
 > ⚠️ 无 bundle 的命令行工具里 `Bundle.main.resourcePath` = 可执行文件所在目录，不是项目 `Resources/`。跑测试工具前先把素材目录拷到二进制旁边：`cp -R Resources/mascots /tmp/ws4/`。
 
 ## 6. 测试工具
@@ -392,6 +416,7 @@ xcrun stapler staple 歇会儿.dmg
 - **`NSWindow.didMoveNotification` 要指定 `object:`**，用 `nil` 会把设置窗口的拖动也算进来
 - **`NSScreen.main` 不可作为定位依据**，会随窗口焦点在双屏间漂移。用 `NSEvent.mouseLocation` 反查
 - **状态栏 title 每秒无脑赋值会触发重排重绘**，只在文案真的变了才写
+- **`ReminderModel.visible` 默认 `false`**，待机动画靠它启动。离屏/抓帧工具不设它，看到的永远是静止画面
 - **会议检测不便宜**，不要每秒查。只在「快到该提醒了」或「有欠着的提醒」时轮询，且限频 5s
 - **不要用「每秒 +1」记账**。定时器会被 App Nap 拉长、被系统睡眠挂起，`+= 1` 会把 8 小时的间隔当成 8 秒。要用真实间隔，并且**封顶**（`min(delta, 3)`）——不认识的间隔不补
 - **只有确凿信号能删数据**。熄屏、锁屏可以清零；任何「手停了多少分钟」的判断都只能改提醒强度，不能碰累计（[D-21](DECISIONS.md#d-21--去掉冻结状态只有离开才清零)、[D-22](DECISIONS.md#d-22--归零兜底改成长静默能删数据的只有确凿信号)）

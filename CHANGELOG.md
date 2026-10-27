@@ -16,6 +16,8 @@
 - **判定机 `PresenceMachine`**。把 `(idle, away, inMeeting, delta, panelVisible, canRemind) → (累计 / 结算 / 静默 / 补发)` 抽成纯结构体，不读时钟、不碰 AppKit；配 15 组时间轴用例、51 项断言，`./Tools/run_tests.sh` 一条命令 3 秒跑完。详见 [D-24](docs/DECISIONS.md#d-24--判定逻辑抽成纯函数用时间轴用例兜住)
 - 菜单第二行改成「**今日坐** 4 小时 20 分 · 已提醒 3 / 8 次」。今日累计不受单轮归零影响，跨零点才归零
 - 今日提醒次数一并落盘：重启不再白送 8 次
+- **README 首屏 GIF**。`Tools/GifShot` 抓真窗口一轮完整动作（哈欠 → 下椅伸展 → 振翅 → 瘫回去），`make_hero_gif.py` 铺底压色出 1.4MB。
+  坑：`WindowShot` 的 `cacheDisplay` 抓的是模型值，待机层的呼吸浮动是 CA 插值，抓出来全静止；换成 `CGWindowListCreateImage` 才录得到。
 - **全屏 Space 实测**（`Tools/run_fullscreen_test.sh`）。之前一直挂着「配了 `.fullScreenAuxiliary` 但从没验过」，以为只能人肉看。其实不用录屏权限——`CGWindowListCopyWindowInfo` 能拿到窗口的存在、层级和前后顺序。11 项断言全过
 
 ### 修复

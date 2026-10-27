@@ -90,7 +90,10 @@ struct SettingsView: View {
                     get: { Int(prefs.restSeconds / 60) },
                     set: { prefs.restSeconds = Double($0 * 60) }
                 ), in: 1...15) {
-                    labeled("离开判定", "人离开超过 \(Int(prefs.restSeconds / 60)) 分钟就算休息")
+                    labeled("暂停计时", "\(Int(prefs.restSeconds / 60)) 分钟没碰键鼠就暂停累加（不清零）")
+                }
+                Stepper(value: $prefs.awayMinutes, in: 2...30, step: 1) {
+                    labeled("真正离开", "走开超过 \(prefs.awayMinutes) 分钟才算休息，计时归零")
                 }
                 Toggle(isOn: $prefs.meetingAware) {
                     labeled("开会时暂缓提醒", "摄像头或麦克风占用时不弹，会议结束后补发")

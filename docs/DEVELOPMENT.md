@@ -80,13 +80,14 @@ open 歇会儿.app
 ```
 每秒 tick (AppDelegate.tick)
 │
-├── IdleClock.seconds ──→ idle >= restSeconds ?
-│        │                      ├─ 是：清零 focusSeconds，够阈值则打卡
-│        └─ 否：focusSeconds += 1
+├── IdleClock.seconds ──→ 三档判定
+│        │                  ├─ idle >= awayResetSeconds（默认 5min）：清零，够阈值则打卡
+│        │                  ├─ idle >= restSeconds（默认 1min）：awayPaused = true，冻结累加
+│        │                  └─ 否则：focusSeconds += 1
 │
 ├── focusSeconds >= softMinutes ──→ 该弹了？
 │        ├── 在会议中？→ deferredPending = true（会后补发）
-│        ├── 免打扰 / 暂停 / 今日已满？→ 不弹
+│        ├── 免打扰 / 暂停 / 今日已满 / 暂离中？→ 不弹
 │        └── 否则 showReminder()
 │
 └── 已弹 + focusSeconds >= strongMinutes ──→ upgradeToStrong()

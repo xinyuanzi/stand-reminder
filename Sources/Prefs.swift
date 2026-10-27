@@ -14,8 +14,20 @@ final class Prefs: ObservableObject {
         didSet { store.set(snoozeMinutes, forKey: "snoozeMinutes") }
     }
 
+    /// 暂停阈值：多少秒没碰键鼠就「暂停累加」，但不清零。
+    /// 看长文档、看视频、开会听人讲——人还在座位上，只是手停了。
     @Published var restSeconds: Double {
         didSet { store.set(restSeconds, forKey: "restSeconds") }
+    }
+
+    /// 真正离开的判定：超过这个分钟数才算起身走开，累计清零并计一次休息
+    @Published var awayMinutes: Int {
+        didSet { store.set(awayMinutes, forKey: "awayMinutes") }
+    }
+
+    /// 真正离开的秒数阈值。强制比暂停阈值大，防止两个值被调反后互相打架。
+    var awayResetSeconds: Double {
+        max(Double(awayMinutes * 60), restSeconds + 60)
     }
 
     /// 强提醒阈值：超过这个时长仍未响应，弹窗升级为强提醒
@@ -69,6 +81,7 @@ final class Prefs: ObservableObject {
         focusMinutes = store.object(forKey: "focusMinutes") as? Int ?? 60
         snoozeMinutes = store.object(forKey: "snoozeMinutes") as? Int ?? 5
         restSeconds = store.object(forKey: "restSeconds") as? Double ?? 60
+        awayMinutes = store.object(forKey: "awayMinutes") as? Int ?? 5
         strongMinutes = store.object(forKey: "strongMinutes") as? Int ?? 90
         meetingAware = store.object(forKey: "meetingAware") as? Bool ?? true
         dailyCap = store.object(forKey: "dailyCap") as? Int ?? 8

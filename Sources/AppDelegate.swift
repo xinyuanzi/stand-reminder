@@ -26,6 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastDraggedAt = Date.distantPast
 
     private var focusSeconds: Double = 0
+    /// 手停了但人还在座位上（idle 介于暂停与离开之间），此时暂停累加、保留进度
+    private var awayPaused = false
     private var panelVisible = false
     private var pauseUntil: Date?
     private var todayCount = 0
@@ -161,26 +163,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshMeetingState()
 
         let idle = IdleClock.seconds
+        let softLimit = Double(prefs.focusMinutes * 60)
+        let strongLimit = Double(max(prefs.strongMinutes, prefs.focusMinutes) * 60)
 
-        if idle >= prefs.restSeconds {
+        // 三种状态分开处理，别用「一个阈值管两件事」：
+        //   idle <  暂停阈值        → 人在电脑前，累加
+        //   idle >= 真正离开阈值     → 真起身了，清零并可能计一次休息
+        //   两者之间                → 只是手停了（看文档/看视频/开会），暂停累加但保留进度
+        if idle >= prefs.awayResetSeconds {
+            awayPaused = false
             if focusSeconds > 0 {
                 // 只有「坐够了软提醒阈值之后才离开」才算一次真正的休息。
                 // 随手离开一分钟也能刷天数的话，解锁就失去意义了。
-                if focusSeconds >= Double(prefs.focusMinutes * 60) {
+                if focusSeconds >= softLimit {
                     recordHabit()
                 }
                 focusSeconds = 0
                 hideReminder()
             }
+        } else if idle >= prefs.restSeconds {
+            awayPaused = true
         } else {
+            awayPaused = false
             focusSeconds += 1
         }
 
-        let softLimit = Double(prefs.focusMinutes * 60)
-        let strongLimit = Double(max(prefs.strongMinutes, prefs.focusMinutes) * 60)
-
-        if !panelVisible, focusSeconds >= softLimit, !isPaused(), !prefs.inQuietHours(),
-           todayCount < prefs.dailyCap {
+        // 人不在座位上就别弹（不然弹窗自己在底下游走半晌，你回来只看到残留动画）
+        if !panelVisible, focusSeconds >= softLimit, !awayPaused,
+           !isPaused(), !prefs.inQuietHours(), todayCount < prefs.dailyCap {
             if prefs.meetingAware && meetingBusy {
                 deferredPending = true
             } else {
@@ -189,7 +199,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // 会议结束，立刻补发欠下的提醒
-        if deferredPending, !meetingBusy, !panelVisible, !isPaused(), !prefs.inQuietHours() {
+        if deferredPending, !meetingBusy, !awayPaused, !panelVisible,
+           !isPaused(), !prefs.inQuietHours() {
             deferredPending = false
             showReminder(deferred: true)
         }
@@ -613,7 +624,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lastStatusTitle = title
         }
 
-        focusMenuItem?.title = "已连续专注 \(minutes) 分钟（软 \(prefs.focusMinutes) / 强 \(prefs.strongMinutes)）"
+        // 「暂离」不是故障，是手停了但人还在座位上——明说出来，省得又以为计时坏了
+        let awayNote = awayPaused ? " · 暂离暂停" : ""
+        focusMenuItem?.title = "已连续专注 \(minutes) 分钟\(awayNote)（软 \(prefs.focusMinutes) / 强 \(prefs.strongMinutes)）"
         countMenuItem?.title = "今日已提醒 \(todayCount) / \(prefs.dailyCap) 次"
 
         let habits = Habits.shared

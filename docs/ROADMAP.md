@@ -20,7 +20,7 @@ v0.9.2–v0.9.5 连续四个版本都在修同一处判定，用户每次反馈�
 | 计时落盘 | ✅ | `SessionStore` 写 `Application Support/XieHuiEr/session.json`，重启不归零。只续数字不补间隙，10 分钟窗口（[D-23](DECISIONS.md#d-23--落盘只续数字不补间隙)） |
 | 菜单显示今日累计 | ✅ | 第二行改成「今日坐 4 小时 20 分 · 已提醒 3 / 8 次」，跨零点归零 |
 | ~~兜底归零~~ | ✅ | 计划外但必须做：旧兜底会在看视频第 30 分钟**无声清零**。改成长静默，累计照涨、只是先不弹（[D-22](DECISIONS.md#d-22--归零兜底改成长静默能删数据的只有确凿信号)） |
-| 全屏 Space 实测 | ⏳ | 卡片配了 `.fullScreenAuxiliary`，但**从没在全屏视频 / Keynote 下验过**。这条只能人肉验，代码测不出来 |
+| 全屏 Space 实测 | ✅ | `Tools/run_fullscreen_test.sh`：自己进真全屏，再把面板弹出来，用 `CGWindowListCopyWindowInfo` 查系统窗口列表。11 项全过——面板在屏上、`isOnActiveSpace` 为真、层级 3 / 1000、排在全屏窗口之前。不需要录屏权限 |
 
 ---
 

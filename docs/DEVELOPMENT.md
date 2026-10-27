@@ -60,6 +60,7 @@ open 歇会儿.app
 │   └── frames/{style}/{pose}_raw.png  AI 原始出图（1024×1024，**不入库**）
 ├── Tools/                    开发期脚本与测试工具，不参与发布
 │   ├── run_tests.sh          判定机用例的唯一入口（一条命令 3 秒跑完）
+│   ├── run_fullscreen_test.sh 全屏 Space 验证（会切一次全屏，6 秒）
 │   ├── paths.py              素材路径的唯一出处（改目录结构只改这里）
 │   ├── normalize.py          白底抠透明 + 统一裁切
 │   ├── add_up_frames.py      反解裁切窗口 + render
@@ -71,6 +72,7 @@ open 歇会儿.app
 │   ├── make_icon.py          生成 AppIcon.icns（猫头鹰头部特写）
 │   ├── presence_check.swift  熄屏/锁屏三信号探针（换判定依据时先跑它）
 │   ├── PresenceTest/         判定机时间轴用例（改判定逻辑必跑）
+│   ├── FullscreenTest/       全屏 Space 验证（改窗口层级/collectionBehavior 必跑）
 │   ├── AnimTest/             动作引擎行为测试
 │   ├── PokeTest/             验证开窗口拖动的面板上按钮仍能点
 │   ├── GazeTest/             验证视线切换真的换图
@@ -330,6 +332,7 @@ cp -R Resources/mascots /tmp/ws4/
 | 工具 | 断言什么 |
 |---|---|
 | `PresenceTest` | 判定机 15 组时间轴场景（见上） |
+| `FullscreenTest` | 真全屏下卡片是否浮得上来：在屏、跟 Space、层级、前后顺序 |
 | `AnimTest` | 循环在动（14s 内 ≥15 次切换）、出现伸懒腰/出拳、被戳后能接回循环、reset 后彻底静止、猫头鹰动作库不出拳 |
 | `PokeTest` | `mouseDownCanMoveWindow = true` 时头像 Button 仍能拿到点击 |
 | `GazeTest` | 同姿势切 gaze 画面真的变；非坐姿忽略 gaze |
@@ -340,6 +343,10 @@ cp -R Resources/mascots /tmp/ws4/
 **为什么必须用真窗口测视觉**：离屏 `NSHostingView` 永远按「窗口已激活」渲染，会把 non-activating 面板的降级外观问题全部掩盖掉——按钮白底白字就是这么漏出去的。
 
 **为什么判定逻辑必须能离屏测**：它每秒跑一次，靠人盯菜单栏只能验「这一刻对不对」，验不了「昨天合盖一夜之后对不对」。判定的全部风险都在长尾场景里，而长尾场景只能靠把时间轴快进。
+
+**全屏 Space 怎么自动化验**：`CGWindowListCopyWindowInfo` 不需要屏幕录制权限——它给不了窗口**内容**，但给得了窗口**存在**、`kCGWindowLayer`（层级）和列表顺序（前 → 后）。所以 `FullscreenTest` 自己 `toggleFullScreen` 进真全屏，再把面板弹出来，然后从系统窗口列表里确认三件事：面板在 `optionOnScreenOnly` 里、层级等于 `NSWindow.Level` 的 rawValue、下标小于全屏窗口的下标。再加上 `panel.isOnActiveSpace`，就是「跟不跟得上全屏 Space」的全部可验部分。
+
+> ⚠️ `kCGWindowBounds` 是 CFDictionary，`as? [String: CGFloat]` 会**静默失败**（返回 nil，看起来像「窗口不存在」）。要用 `CGRect(dictionaryRepresentation:)`。这个坑害我第一轮白跑了一次。
 
 ## 7. 新增一个形象（Checklist）
 

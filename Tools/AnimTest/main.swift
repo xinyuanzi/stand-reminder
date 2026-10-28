@@ -141,7 +141,7 @@ if let first = punchIdx.first, let last = punchIdx.last, punchIdx.count >= 2 {
 check("出拳是连击，中间不回站姿", !brokeCombo,
       brokeCombo ? "第 \(punchIdx.count) 拳之间插了 stand" : "连续 \(punchIdx.count) 拳")
 
-// 起身是硬切（素材缺 standup），所以要短：坐定太久再站起来像不情愿
+// 起身是硬切（standup 出过一版不合格已撤回），所以要短：坐定太久再站起来像不情愿
 let tailSit = MascotRoutine.act1.last
 check("第一幕收尾要短促", (tailSit?.1 ?? 9) <= 0.25,
       "收尾 \(tailSit?.0.rawValue ?? "?") \(tailSit?.1 ?? 0)s")
@@ -156,14 +156,15 @@ check("第一幕收尾要短促", (tailSit?.1 ?? 9) <= 0.25,
 //   站姿族（猫站在椅子旁）：stand / up / punch1 / punch2 / flap1 / flap2
 //
 // 跨族时整只动物在画面里的位置换了地方，所以每一处跨族都必须是设计好的那一步：
-//   坐姿族 → 站姿族   只能是 sit → stand       （缺 standup 帧，这一跳躲不掉）
+//   坐姿族 → 站姿族   只能是 sit → stand       （standup 已撤回，这一跳暂时躲不掉）
 //   站姿族 → 坐姿族   只能是 stand → sitdown   （这个方向有中间帧顶着）
 //
 // 换句话说：谁要是把 `.yawn2` 直接接 `.up`，猫会「打了个哈欠然后凭空站起来」，
 // 而这正是这条断言要拦的东西。
 let seated: Set<MascotPose> = [.sit, .blink, .yawn1, .yawn2, .scratch, .sitdown]
 // standup 归站姿族：屁股已经离座、身体探出椅子，画面位置已经是「椅子外」了。
-// 它存在的意义就是把 sit→stand 这一跳拆成两小步。
+// 它当前没有排进任何序列，先留在族里——将来重新出图接回 act2 时，
+// 这条判定不用再改一次。
 let standing: Set<MascotPose> = [.standup, .stand, .up, .punch1, .punch2, .flap1, .flap2]
 
 func family(_ p: MascotPose) -> String {
@@ -172,8 +173,7 @@ func family(_ p: MascotPose) -> String {
     return "?"
 }
 
-// sit→standup 和 sit→stand 都允许：有椅子素材的三只走前者，
-// 水獭和小熊没有椅子素材，缺帧时退回 stand，走的还是后者。
+// sit→standup 暂时用不到（standup 不在序列里），保留是为了接回去时不用动判定。
 let allowedCrossings: Set<String> = [
     "坐→站:sit→standup", "坐→站:sit→stand",
     "站→坐:stand→sitdown",
@@ -223,7 +223,7 @@ for (libName, lib) in [("哺乳动物", MascotRoutine.restVariants),
 
 check("每一段都该以坐姿开头结尾（轮次之间靠 .sit 接缝）", badEnds.isEmpty,
       badEnds.joined(separator: "；"))
-check("跨族换帧只准是 sit→standup / sit→stand 和 stand→sitdown", badCuts.isEmpty,
+check("跨族换帧只准是 sit→stand（或 sit→standup）和 stand→sitdown", badCuts.isEmpty,
       badCuts.joined(separator: "；"))
 check("单帧时长应在 0~1.5 秒之间", badDurations.isEmpty,
       badDurations.joined(separator: "；"))

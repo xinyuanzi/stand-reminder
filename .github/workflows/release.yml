@@ -48,6 +48,10 @@ jobs:
           codesign -dv "$APP" 2>&1 | head -3
 
       - name: 上传 Release
+        # 只有打 tag 时才发 Release。`action-gh-release` 要求 github.ref 是 refs/tags/*，
+        # 手动 dispatch 跑在分支上，不加这个条件就必红一次——而上面那条注释
+        # 恰恰写着「手动跑一次也行，方便验证 workflow 本身」。
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.dmg

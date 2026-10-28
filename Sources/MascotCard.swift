@@ -73,6 +73,17 @@ final class ReminderModel: ObservableObject {
     @Published var visible = false
     /// 当前视线方向，由 AppDelegate 按鼠标位置更新
     @Published var gaze: GazeDirection = .center
+    /// 这一轮已经推掉了几次「再等 N 分钟」，由 AppDelegate 从判定机同步过来
+    @Published var snoozeStreak: Int = 0
+
+    /// 「再等一会儿」最多给几次。
+    ///
+    /// 不是拍脑袋定的数：一次 snooze 把累计往回拨 5 分钟，三次就是 15 分钟，
+    /// 已经是「我手头这点事马上完」能用的全部额度了。再给下去，
+    /// 90 分钟的强提醒会被无限推迟——那正是这个工具唯一不能失守的地方。
+    static let maxSnoozeStreak = 3
+
+    var canSnooze: Bool { snoozeStreak < Self.maxSnoozeStreak }
 }
 
 /// 被戳时说的短句。都控制在 8 字内，标题一行放得下。
@@ -302,10 +313,21 @@ struct MascotCard: View {
                 }
                 .buttonStyle(PrimaryButtonStyle(color: primaryFill))
 
-                Button(action: onSnooze) {
-                    Text("再等 \(prefs.snoozeMinutes) 分钟")
+                if model.canSnooze {
+                    Button(action: onSnooze) {
+                        Text("再等 \(prefs.snoozeMinutes) 分钟")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                } else {
+                    // 位置留着、只是不再给按钮：卡片是固定 292pt 高的，
+                    // 少一个控件不会让它变矮，只会空出一块——那比明说更奇怪。
+                    // 这句话的作用是解释「按钮去哪了」，而不是补一个更狠的按钮。
+                    Text("推了 \(ReminderModel.maxSnoozeStreak) 次了，这次我真的不走")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(Color(red: 0.55, green: 0.54, blue: 0.51))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
                 }
-                .buttonStyle(SecondaryButtonStyle())
             }
             .padding(.top, 1)
         }

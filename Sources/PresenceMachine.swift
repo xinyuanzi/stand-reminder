@@ -75,6 +75,15 @@ struct PresenceMachine: Equatable {
     /// 这一轮有没有已经弹过。防止调用方漏置 panelVisible 时每秒弹一个。
     private(set) var reminderFired = false
 
+    /// 这一轮连续点了几次「再等 N 分钟」。
+    ///
+    /// 不设上限的话 snooze 是个后门：`rewind` 把累计往回拨 5 分钟，
+    /// 到点再拨 5 分钟，可以一直拨到天亮 —— 强提醒（90 分钟）永远升不上来。
+    /// 放在判定机里而不是 UI 里，是因为「这一轮」的边界由判定机定义：
+    /// `reset` / `settle` / `rolloverDay` / `adopt` 全部会清它，
+    /// 放在外面就有了「哪条路径忘了清」的可能。
+    private(set) var snoozeStreak = 0
+
     /// 这一轮离开的起始时刻（引擎时间）。熄屏/睡眠通知会在事发瞬间写入。
     private(set) var awaySince: Double?
     /// 这一轮离开已经结算过，避免重复清零、重复打卡
@@ -106,11 +115,15 @@ struct PresenceMachine: Equatable {
         // 刚启动时屏幕上没有任何卡片，「本轮已弹过」必须归零。
         // 否则续上 30 分钟之后，再坐满 60 分钟也不会弹——续上反而把提醒吞掉了。
         reminderFired = false
+        // 连续推掉几次属于「这一轮」的状态，重启就是新的一轮
+        snoozeStreak = 0
     }
 
     /// 新的一天：只清当日累计，专注时长属于「这一轮」，跨零点不该断
     mutating func rolloverDay() {
         daySitSeconds = 0
+        // 但「推掉了几次」没有跨零点的道理——凌晨接着推，还是同一个人在推
+        snoozeStreak = 0
     }
 
     /// 用户点「休息了」或菜单「重置计时」
@@ -122,6 +135,7 @@ struct PresenceMachine: Equatable {
         reminderFired = false
         awaySince = nil
         awaySettled = false
+        snoozeStreak = 0
     }
 
     /// 稍后再说：退回到「阈值前 N 分钟」，到点会再弹一次
@@ -129,6 +143,12 @@ struct PresenceMachine: Equatable {
         focusSeconds = max(0, seconds)
         deferredPending = false
         reminderFired = false
+    }
+
+    /// 记一次「再等一会儿」。放在 rewind 旁边而不是塞进 rewind，
+    /// 是因为次数和回拨是两件事：菜单里也可能有别的入口需要回拨但不计数。
+    mutating func noteSnooze() {
+        snoozeStreak += 1
     }
 
     mutating func clearDeferred() {
@@ -201,6 +221,8 @@ struct PresenceMachine: Equatable {
         inLongSilence = false
         deferredPending = false
         reminderFired = false
+        // 确凿离开过一轮，推掉几次的历史不该带到下一轮
+        snoozeStreak = 0
         guard focusSeconds > 0 else { return false }
         let counted = focusSeconds >= t.soft
         focusSeconds = 0

@@ -65,10 +65,21 @@ RunLoop.main.run(until: Date().addingTimeInterval(2.0))
 let duringReact = probe.changes[mark...]
 check("被戳播了反应", duringReact.contains(.scratch), "\(duringReact.map { $0.rawValue })")
 
-RunLoop.main.run(until: Date().addingTimeInterval(8.0))
-let afterReact = probe.changes[mark...]
-check("反应之后接回循环", afterReact.count > duringReact.count,
-      "反应后新增 \(afterReact.count - duringReact.count) 次切换")
+// 反应之后必须接回循环。
+//
+// 用轮询而不是死等 8 秒：轮与轮之间随机歇 1.3~3.2 秒，另有 22% 概率歇
+// 5~8 秒。死等 8 秒有时正好整段落在歇脚里，一行切换都收不到，看起来像
+// 「反应把循环掐断了」—— 实际只是运气差。给它 12 秒上限，抓到就往下走。
+var resumed = false
+var waitedAfter = 0.0
+while waitedAfter < 12 {
+    RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+    waitedAfter += 0.5
+    if probe.changes.count > mark + duringReact.count { resumed = true; break }
+}
+check("反应之后接回循环", resumed,
+      resumed ? "反应后 \(String(format: "%.1f", waitedAfter))s 内接回"
+              : "等了 12 秒一次切换都没有")
 
 // 第三段：隐藏时 reset 必须彻底停手
 animator.reset()
@@ -120,6 +131,91 @@ check("出拳是连击，中间不回站姿", !brokeCombo,
 let tailSit = MascotRoutine.act1.last
 check("第一幕收尾要短促", (tailSit?.1 ?? 9) <= 0.25,
       "收尾 \(tailSit?.0.rawValue ?? "?") \(tailSit?.1 ?? 0)s")
+
+// 第六段：坐姿族 / 站姿族之间的接缝
+//
+// 这个工具只有关键姿态、两帧之间不补间。但「相邻两帧姿态不同」本身不是问题
+// —— 哈欠接挠耳朵、出拳接出拳，那本来就是动画在推进。真正会造成视觉跳变的
+// 只有一族到另一族：
+//
+//   坐姿族（猫在椅子上）：sit / blink / yawn1 / yawn2 / scratch / sitdown
+//   站姿族（猫站在椅子旁）：stand / up / punch1 / punch2 / flap1 / flap2
+//
+// 跨族时整只动物在画面里的位置换了地方，所以每一处跨族都必须是设计好的那一步：
+//   坐姿族 → 站姿族   只能是 sit → stand       （缺 standup 帧，这一跳躲不掉）
+//   站姿族 → 坐姿族   只能是 stand → sitdown   （这个方向有中间帧顶着）
+//
+// 换句话说：谁要是把 `.yawn2` 直接接 `.up`，猫会「打了个哈欠然后凭空站起来」，
+// 而这正是这条断言要拦的东西。
+let seated: Set<MascotPose> = [.sit, .blink, .yawn1, .yawn2, .scratch, .sitdown]
+let standing: Set<MascotPose> = [.stand, .up, .punch1, .punch2, .flap1, .flap2]
+
+func family(_ p: MascotPose) -> String {
+    if seated.contains(p) { return "坐" }
+    if standing.contains(p) { return "站" }
+    return "?"
+}
+
+let allowedCrossings: Set<String> = ["坐→站:sit→stand", "站→坐:stand→sitdown"]
+
+var badCuts: [String] = []
+var badEnds: [String] = []
+var badDurations: [String] = []
+var unclassified: [String] = []
+
+for (libName, lib) in [("哺乳动物", MascotRoutine.restVariants),
+                       ("猫头鹰", MascotRoutine.Owl.variants)] {
+    for (i, seq) in lib.enumerated() {
+        guard let head = seq.first?.0, let tail = seq.last?.0 else {
+            badEnds.append("\(libName)#\(i) 是空序列")
+            continue
+        }
+        // 6.1 每一段都必须从坐姿开始、回坐姿结束。
+        // 轮与轮之间 `playNextCycle` 会把姿态置成 .sit 再歇 1.3~8 秒，
+        // 所以任何一段不以 sit 收尾，都会在「歇一下」那一刻凭空跳一次。
+        if head != .sit { badEnds.append("\(libName)#\(i) 开头是 \(head.rawValue)") }
+        if tail != .sit { badEnds.append("\(libName)#\(i) 结尾是 \(tail.rawValue)") }
+
+        var crossings = 0
+        for j in 1..<seq.count {
+            let prev = seq[j - 1].0, cur = seq[j].0
+            if family(prev) == "?" { unclassified.append("\(libName)#\(i) \(prev.rawValue)") }
+            guard family(prev) != family(cur) else { continue }
+            crossings += 1
+            let key = "\(family(prev))→\(family(cur)):\(prev.rawValue)→\(cur.rawValue)"
+            if !allowedCrossings.contains(key) {
+                badCuts.append("\(libName)#\(i) 第 \(j) 帧：\(prev.rawValue)→\(cur.rawValue)")
+            }
+        }
+        // 6.2 一段动作里最多起身一次、坐下一次。
+        // 多出来的跨族（哪怕方向合法）说明序列被拼重了。
+        if crossings > 2 {
+            badCuts.append("\(libName)#\(i) 跨族 \(crossings) 次，一段里只该起身+坐下各一次")
+        }
+
+        // 6.3 时长只做防手滑：0 会让这一帧根本看不见，太长会让动作僵住
+        for (pose, d) in seq where d <= 0 || d > 1.5 {
+            badDurations.append("\(libName)#\(i) \(pose.rawValue) \(d)s")
+        }
+    }
+}
+
+check("每一段都该以坐姿开头结尾（轮次之间靠 .sit 接缝）", badEnds.isEmpty,
+      badEnds.joined(separator: "；"))
+check("跨族换帧只准是 sit→stand 和 stand→sitdown", badCuts.isEmpty,
+      badCuts.joined(separator: "；"))
+check("单帧时长应在 0~1.5 秒之间", badDurations.isEmpty,
+      badDurations.joined(separator: "；"))
+check("每个姿态都该归到某一族（新增姿态时别忘了归类）", unclassified.isEmpty,
+      Set(unclassified).sorted().joined(separator: "；"))
+
+// 把这条规则量化出来：等哪天补上了 standup 帧，这里的跨族次数会变，
+// 提醒同步收紧 allowedCrossings（那时 sit→stand 就该改成 sit→standup→stand）
+let allLibs = MascotRoutine.restVariants + MascotRoutine.Owl.variants
+let crossCount = allLibs.reduce(0) { acc, seq in
+    acc + (1..<max(seq.count, 1)).filter { family(seq[$0].0) != family(seq[$0 - 1].0) }.count
+}
+print("共 \(allLibs.count) 段动作，跨族换帧 \(crossCount) 处（全部由缺 standup 帧造成）")
 
 print(fails == 0 ? "\n全部通过" : "\n\(fails) 项失败")
 exit(fails == 0 ? 0 : 1)

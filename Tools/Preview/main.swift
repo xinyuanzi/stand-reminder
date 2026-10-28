@@ -46,10 +46,14 @@ let model = ReminderModel()
 model.minutes = 60
 model.urgency = urgency
 model.stage = (poseName == "up") ? .stretching : .sitting
+// 第四个参数是 snooze 次数：传 3 就能渲染「推满了」的样子，
+// 用来确认那句替代文案在 286pt 卡片里放得下、不挤掉按钮区
+if args.count > 4, let n = Int(args[4]) { model.snoozeStreak = n }
 
 let animator = MascotAnimator()
 animator.hold(MascotPose(rawValue: poseName) ?? .sit)
 
 let card = MascotCard(model: model, animator: animator, onRest: {}, onSnooze: {}, onPoke: {})
+let suffix = model.canSnooze ? "" : "_nosnooze"
 render(card, size: NSSize(width: 342, height: 360),
-       to: "/tmp/card_\(style)_\(poseName)_\(urgency == .strong ? "strong" : "soft").png")
+       to: "/tmp/card_\(style)_\(poseName)_\(urgency == .strong ? "strong" : "soft")\(suffix).png")

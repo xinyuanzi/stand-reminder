@@ -244,6 +244,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if event.settledAway {
             if event.shouldRecordHabit { recordHabit() }
             hideReminder()
+            // 确凿离开过一轮，推掉几次的历史跟着归零（判定机里已清，这里同步 UI）
+            syncSnoozeStreak()
         }
 
         if event.shouldShowReminder {
@@ -342,6 +344,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.stage = .sitting
         model.urgency = .soft
         model.deferred = deferred
+        // 上一轮推掉几次要带过来：否则卡片一藏一弹就把额度刷回去了
+        model.snoozeStreak = machine.snoozeStreak
 
         let p = makePanelIfNeeded()
         p.level = .floating
@@ -499,15 +503,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         machine.reset()
         hideReminder()
+        syncSnoozeStreak()
         persist()
     }
 
     private func didSnooze() {
         let limit = Double(prefs.focusMinutes * 60)
         let back = Double(prefs.snoozeMinutes * 60)
+        machine.noteSnooze()
         machine.rewind(to: limit - back)
+        syncSnoozeStreak()
         hideReminder()
         persist()
+    }
+
+    /// 把判定机里的「推掉几次」同步给卡片。
+    ///
+    /// 只在真的变了才写 `@Published` —— 每秒 tick 都赋一次同样的值，
+    /// 会通知 SwiftUI 每秒重绘一次卡片，在透明面板上纯属自找重影。
+    private func syncSnoozeStreak() {
+        guard model.snoozeStreak != machine.snoozeStreak else { return }
+        model.snoozeStreak = machine.snoozeStreak
     }
 
     // MARK: - 动作编排：哈欠 -> 伸懒腰 -> 打两拳 -> 歇一下，循环播放
@@ -900,6 +916,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func resetTimer() {
         machine.reset()
         hideReminder()
+        syncSnoozeStreak()
         persist()
         updateStatus()
     }

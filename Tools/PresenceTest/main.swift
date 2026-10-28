@@ -403,6 +403,66 @@ do {
           "边界上偏 2px 仍应算拖动")
 }
 
+// MARK: - 18. 「再等一会儿」不能变成永久屏蔽
+//
+// 这一组守的是一处产品漏洞：`rewind` 把累计往回拨 N 分钟，到点再拨 N 分钟，
+// 只要一直点就能一直不到 90 分钟 —— 强提醒永远升不上来，而这个工具唯一
+// 不能失守的就是「提醒真的会来」。所以次数记在判定机里，并且必须跟着
+// 「这一轮」一起归零，否则第二轮的第一次推就会被误判成第四次。
+
+do {
+    // 18.1 计数只增不减，直到轮次结束
+    var m = PresenceMachine()
+    var now = 0.0
+    for _ in 1...3600 { now += 1; _ = m.step(now: now, input: beat(now), thresholds: T) }
+    check(m.snoozeStreak == 0, "还没推过就该是 0，实际 \(m.snoozeStreak)")
+
+    for _ in 1...3 {
+        m.noteSnooze()
+        m.rewind(to: 3300)   // 60 分钟阈值往回拨 5 分钟
+    }
+    check(m.snoozeStreak == 3, "推三次应记 3，实际 \(m.snoozeStreak)")
+
+    // 18.2 推掉不改变「这一轮」的累计归属，只改变数值 —— 天数照记
+    check(near(m.focusSeconds, 3300), "rewind 应把累计拨回 3300，实际 \(m.focusSeconds)")
+
+    // 18.3 用户真去休息了（点了按钮 = reset）→ 次数归零
+    m.reset()
+    check(m.snoozeStreak == 0, "点「我去走走了」后次数应归零，实际 \(m.snoozeStreak)")
+
+    // 18.4 确凿离开结算（锁屏够久）同样归零
+    var n = PresenceMachine()
+    var t = 0.0
+    for _ in 1...3700 { t += 1; _ = n.step(now: t, input: beat(t), thresholds: T) }
+    n.noteSnooze()
+    for _ in 1...40 {
+        t += 1
+        _ = n.step(now: t, input: beat(t, away: true), thresholds: T)
+    }
+    check(n.snoozeStreak == 0, "确凿离开一轮后次数应归零，实际 \(n.snoozeStreak)")
+
+    // 18.5 跨零点：专注时长不该断，但「推了几次」属于同一个人在推，也该清
+    var k = PresenceMachine()
+    k.noteSnooze()
+    k.noteSnooze()
+    k.rolloverDay()
+    check(k.snoozeStreak == 0, "跨零点后次数应归零，实际 \(k.snoozeStreak)")
+
+    // 18.6 重启续盘：新进程就是新的一轮，不该继承昨天的推诿记录
+    var r = PresenceMachine()
+    r.noteSnooze()
+    r.noteSnooze()
+    r.noteSnooze()
+    r.adopt(focusSeconds: 1800, daySitSeconds: 7200)
+    check(r.snoozeStreak == 0, "续盘后次数应归零，实际 \(r.snoozeStreak)")
+
+    // 18.7 rewind 本身不计数 —— 计数是独立动作，别把两个语义揉进一个函数
+    var s = PresenceMachine()
+    s.rewind(to: 3300)
+    s.rewind(to: 3300)
+    check(s.snoozeStreak == 0, "rewind 不该顺手加次数，实际 \(s.snoozeStreak)")
+}
+
 // MARK: - 汇总
 
 if failures.isEmpty {

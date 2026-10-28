@@ -463,6 +463,133 @@ do {
     check(s.snoozeStreak == 0, "rewind 不该顺手加次数，实际 \(s.snoozeStreak)")
 }
 
+// MARK: - 19. 「我去走走了」不能按一下就当休息过
+//
+// 这一组守的是一处信任漏洞：原来的 `didRest()` 是「打卡 + 清零 + 收卡片」一步到位。
+// 可用户点完按钮，手还放在键盘上继续打字的情况一点不少见（想先把这句话打完），
+// 这时打卡照记、计时照清，下一轮又从头开始算 60 分钟。按钮变成了「假装休息过」。
+//
+// 改法：点击只算「宣称要去休息」，开一个 5 分钟观察窗口。窗口内
+//   ① 熄屏/锁屏够久  → 真休息
+//   ② 手停够久（60s）→ 真休息（用户已经说了要走，沉默这次是佐证）
+//   ③ 键鼠一直在     → 判成没走，累计一秒不减，立刻再提醒一次
+
+let restBtn = "我去走走了"
+
+do {
+    // 19.1 没坐够阈值就点：没什么可确认的，直接清零
+    var m = PresenceMachine()
+    var now = 0.0
+    for _ in 1...600 { now += 1; _ = m.step(now: now, input: beat(now), thresholds: T) }
+    let armed = m.claimRest(now: now, thresholds: T)
+    check(!armed, "\(restBtn)前置：没坐够阈值不该开观察窗口")
+    check(near(m.focusSeconds, 0), "没坐够阈值点了就直接清零，实际 \(m.focusSeconds)")
+    check(m.awaitingRestSince == nil, "没坐够阈值不该留下观察窗口")
+}
+
+do {
+    // 19.2 坐够了点休息：先不清零，窗口开着
+    var m = PresenceMachine()
+    var now = 0.0
+    for _ in 1...3700 { now += 1; _ = m.step(now: now, input: beat(now), thresholds: T) }
+    let before = m.focusSeconds
+    check(m.claimRest(now: now, thresholds: T), "\(restBtn)坐够阈值应开观察窗口")
+    check(near(m.focusSeconds, before), "点了不该立刻清零（那是假按钮），实际 \(m.focusSeconds)")
+    check(m.awaitingRestSince != nil, "点了之后窗口应处于打开状态")
+}
+
+do {
+    // 19.3 窗口内熄屏够久 → 确认休息 + 打卡 + 清零
+    var m = PresenceMachine()
+    var now = 0.0
+    for _ in 1...3700 { now += 1; _ = m.step(now: now, input: beat(now), thresholds: T) }
+    check(m.claimRest(now: now, thresholds: T), "\(restBtn)前置：窗口应打开")
+    var confirmed = false, habit = false
+    for _ in 1...40 {
+        now += 1
+        let e = m.step(now: now, input: beat(now, away: true), thresholds: T)
+        if e.restConfirmed { confirmed = true }
+        if e.shouldRecordHabit { habit = true }
+    }
+    check(confirmed, "\(restBtn)熄屏够久应确认为真休息")
+    check(habit, "\(restBtn)确认为真休息且坐够阈值，应记一次打卡")
+    check(near(m.focusSeconds, 0), "确认后累计应清零，实际 \(m.focusSeconds)")
+    check(m.awaitingRestSince == nil, "确认后窗口应关闭")
+}
+
+do {
+    // 19.4 窗口内手停够久（没熄屏）→ 也算真休息
+    var m = PresenceMachine()
+    var now = 0.0
+    for _ in 1...3700 { now += 1; _ = m.step(now: now, input: beat(now), thresholds: T) }
+    check(m.claimRest(now: now, thresholds: T), "\(restBtn)前置：窗口应打开")
+    var confirmed = false, habit = false
+    // 点了按钮之后人就走开了，idle 从 0 一路涨到 60 秒才够判
+    var sinceClick = 0.0
+    for _ in 1...90 {
+        now += 1
+        sinceClick += 1
+        let e = m.step(now: now, input: beat(now, idle: sinceClick), thresholds: T)
+        if e.shouldRecordHabit { habit = true }
+        if e.restConfirmed { confirmed = true; break }
+    }
+    check(confirmed, "\(restBtn)手停够久就该确认为真休息，不必等熄屏")
+    check(habit, "\(restBtn)手停确认也应记打卡")
+    check(near(m.focusSeconds, 0), "确认那一刻累计应清零，实际 \(m.focusSeconds)")
+    check(sinceClick >= 58, "该等到手停接近 60 秒才确认，实际 \(Int(sinceClick)) 秒")
+}
+
+do {
+    // 19.5 窗口到点手一直没停 → 判成没走：再提醒一次，累计一秒不减
+    var m = PresenceMachine()
+    var now = 0.0
+    for _ in 1...3700 { now += 1; _ = m.step(now: now, input: beat(now), thresholds: T) }
+    let atClick = m.focusSeconds
+    check(m.claimRest(now: now, thresholds: T), "\(restBtn)前置：窗口应打开")
+    var fired = false, unconfirmed = false
+    for _ in 1...310 {
+        now += 1
+        let e = m.step(now: now, input: beat(now, idle: 0.5), thresholds: T)
+        if e.shouldShowReminder {
+            fired = true
+            unconfirmed = e.restUnconfirmed
+            break
+        }
+    }
+    check(fired, "\(restBtn)窗口到点还在用键鼠，应再提醒一次")
+    check(unconfirmed, "再提醒要带上「没走成」这个事实，卡片才能自己解释")
+    check(m.focusSeconds >= atClick + 290,
+          "\(restBtn)没走的这段时间一秒都不该减，实际只涨了 \(Int(m.focusSeconds - atClick)) 秒")
+}
+
+do {
+    // 19.6 窗口内只停 30 秒（不够 60）→ 不确认，窗口继续，累计继续涨
+    var m = PresenceMachine()
+    var now = 0.0
+    for _ in 1...3700 { now += 1; _ = m.step(now: now, input: beat(now), thresholds: T) }
+    check(m.claimRest(now: now, thresholds: T), "\(restBtn)前置：窗口应打开")
+    var confirmed = false
+    for _ in 1...30 {
+        now += 1
+        if m.step(now: now, input: beat(now, idle: 40), thresholds: T).restConfirmed {
+            confirmed = true
+        }
+    }
+    check(!confirmed, "\(restBtn)手停 30 秒还不够，不该急着确认")
+    check(m.awaitingRestSince != nil, "\(restBtn)窗口应还开着")
+    check(m.focusSeconds > 3600, "窗口期间继续累计，实际 \(m.focusSeconds)")
+}
+
+do {
+    // 19.7 重启续盘：进程都没了，那五分钟里人在不在我们不知道，窗口不跨重启
+    var m = PresenceMachine()
+    var now = 0.0
+    for _ in 1...3700 { now += 1; _ = m.step(now: now, input: beat(now), thresholds: T) }
+    _ = m.claimRest(now: now, thresholds: T)
+    m.adopt(focusSeconds: 3700, daySitSeconds: 3700)
+    check(m.awaitingRestSince == nil, "\(restBtn)续盘后观察窗口应清空")
+}
+
 // MARK: - 汇总
 
 if failures.isEmpty {

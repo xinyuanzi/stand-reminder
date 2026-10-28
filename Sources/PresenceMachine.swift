@@ -29,15 +29,23 @@ struct PresenceThresholds: Equatable {
     var longSilent: Double
     /// 离开必须持续够久才算数，防止误触锁屏抹掉两小时
     var awayMin: Double
+    /// 点了「我去走走了」之后的观察窗口。窗口内既没熄屏、键鼠/麦克风也一直在，
+    /// 就判成「其实没走」，再弹一次。
+    var restWindow: Double
+    /// 观察窗口内，手停够这么久就算人真的走开了（回到原始需求里的「离开 1 分钟算休息」）
+    var restQuiet: Double
 
     init(focusMinutes: Int, strongMinutes: Int, silentMinutes: Int,
-         longSilentMinutes: Int, awayMin: Double = 30) {
+         longSilentMinutes: Int, awayMin: Double = 30,
+         restWindow: Double = 300, restQuiet: Double = 60) {
         soft = Double(focusMinutes * 60)
         strong = Double(max(strongMinutes, focusMinutes) * 60)
         silent = Double(silentMinutes * 60)
         // 和设置页同一口径：长静默必须明显大于静默，两个值被调反时以大的为准
         longSilent = max(Double(longSilentMinutes * 60), Double(silentMinutes * 60) + 60)
         self.awayMin = awayMin
+        self.restWindow = restWindow
+        self.restQuiet = restQuiet
     }
 }
 
@@ -55,6 +63,10 @@ struct PresenceEvent: Equatable {
     var silenceEnded = false
     var shouldShowReminder = false
     var reminderIsDeferred = false
+    /// 点过「我去走走了」的那一轮，刚刚被确认为真休息（熄屏够久，或手停够久）
+    var restConfirmed = false
+    /// 点过「我去走走了」，但观察窗口到点时键鼠/麦克风还在 —— 判成没走，再提醒一次
+    var restUnconfirmed = false
 }
 
 /// 「人还在不在座位上」的判定机。
@@ -89,6 +101,13 @@ struct PresenceMachine: Equatable {
     /// 这一轮离开已经结算过，避免重复清零、重复打卡
     private(set) var awaySettled = false
 
+    /// 点了「我去走走了」的时刻。非 nil = 正在观察这个人到底走没走。
+    ///
+    /// 为什么不能点了就直接清零：用户点了按钮，手还放在键盘上继续打字，
+    /// 这种情况一点也不少见（想先把这句话打完、先把这个函数写完）。
+    /// 直接清零等于给了一个「按一下就当休息过」的假按钮，打卡和累计同时被污染。
+    private(set) var awaitingRestSince: Double?
+
     /// 定时器被 App Nap 或系统睡眠拉长时，单次最多认这么多。
     /// 真实 tick 是 1 秒，容忍 3 秒抖动；再长就不是「过去了一段时间」，
     /// 而是「我们没看见发生了什么」，不认识的间隔不补。
@@ -117,6 +136,8 @@ struct PresenceMachine: Equatable {
         reminderFired = false
         // 连续推掉几次属于「这一轮」的状态，重启就是新的一轮
         snoozeStreak = 0
+        // 观察窗口不跨重启：进程都没了，我们没法知道那五分钟里人在不在
+        awaitingRestSince = nil
     }
 
     /// 新的一天：只清当日累计，专注时长属于「这一轮」，跨零点不该断
@@ -136,6 +157,24 @@ struct PresenceMachine: Equatable {
         awaySince = nil
         awaySettled = false
         snoozeStreak = 0
+        awaitingRestSince = nil
+    }
+
+    /// 用户点「休息了」——先开观察窗口，不立刻清零。
+    ///
+    /// 没坐够阈值就点（比如菜单里「立即提醒我一次」弹出来的卡片），
+    /// 没什么可确认为休息的，直接清零。
+    ///
+    /// 返回「是否开了窗口」。调用方据此决定是「先不打卡，等确认」还是「按老路走」。
+    @discardableResult
+    mutating func claimRest(now: Double, thresholds t: PresenceThresholds) -> Bool {
+        guard focusSeconds >= t.soft else {
+            reset()
+            return false
+        }
+        // 已经在该窗口里了就别重置计时，否则连点两下能无限延长观察期
+        if awaitingRestSince == nil { awaitingRestSince = now }
+        return true
     }
 
     /// 稍后再说：退回到「阈值前 N 分钟」，到点会再弹一次
@@ -170,6 +209,8 @@ struct PresenceMachine: Equatable {
         inLongSilence = !input.away && input.idle >= t.longSilent
         event.silenceEnded = wasSilent && !inSilence
 
+        resolveAwaitingRest(now: now, input: input, thresholds: t, event: &event)
+
         if !input.panelVisible, !reminderFired, input.canRemind,
            focusSeconds >= t.soft {
             // 确凿离开、正在开会、手停了半小时以上：先不打断，但要记着欠了一条
@@ -190,6 +231,58 @@ struct PresenceMachine: Equatable {
     }
 
     // MARK: - 内部
+
+    /// 收「点了我去走走了」的那笔账。
+    ///
+    /// 三条出路，按优先级：
+    ///   1. **熄屏/锁屏够久** —— `settleAway` 已经结算过了（清零 + 算好打卡），这里只收窗口
+    ///   2. **手停了够久**（默认 60 秒）—— 人确实走开了，清零并算一次打卡
+    ///   3. **窗口到点，键鼠/麦克风还在** —— 判成「其实没走」：**累计一秒不减**，
+    ///      立刻再提醒一次
+    ///
+    /// 第 3 条是这个函数存在的全部理由。不做的话，「我去走走了」就变成一个
+    /// 按一下就当休息过的假按钮：手没离开键盘，打卡照记、计时照清。
+    private mutating func resolveAwaitingRest(now: Double, input: PresenceInput,
+                                              thresholds t: PresenceThresholds,
+                                              event: inout PresenceEvent) {
+        // 1. 确凿离开。settleAway 已在本步开头清零并算好了打卡，
+        //    这里只把「这次确凿离开正好收尾了一个观察窗口」这件事说出去。
+        if event.settledAway, awaitingRestSince != nil {
+            awaitingRestSince = nil
+            event.restConfirmed = true
+            return
+        }
+
+        guard let since = awaitingRestSince else { return }
+
+        // 2. 手停了够久。注意这是「已被用户告知要走」的前提下的沉默，
+        //    和 D-19「手停不算离开」不冲突：那条约束的是「没被告知」的情况。
+        if !input.inMeeting, input.idle >= t.restQuiet {
+            awaitingRestSince = nil
+            event.restConfirmed = true
+            event.shouldRecordHabit = settle(t) || event.shouldRecordHabit
+            return
+        }
+
+        // 3. 窗口到点还在用（或者还在开会）→ 没走
+        guard now - since >= t.restWindow else { return }
+        awaitingRestSince = nil
+
+        // 和正常路径同一套分支：开会 / 长静默 / 暂停 / 免打扰 / 今日已满都不弹，
+        // 但累计一秒不减。区别只是这条路径要把「没走」这个事实带出去，
+        // 让卡片换一句解释，否则用户会以为「我明明点了休息，怎么五分钟后又来」。
+        if input.canRemind, !input.away, !input.inMeeting, !inLongSilence {
+            event.shouldShowReminder = true
+            event.reminderIsDeferred = false
+            event.restUnconfirmed = true
+            reminderFired = true
+        } else {
+            // 交给正常路径在允许的时候补弹；那一路的文案是「会议结束了，先把欠的休息补上」，
+            // 这里不覆盖——总比在会议中途弹窗强
+            if input.canRemind { deferredPending = true }
+            reminderFired = false
+        }
+    }
 
     private mutating func settleAway(now: Double, away: Bool,
                                      thresholds t: PresenceThresholds,
@@ -223,6 +316,9 @@ struct PresenceMachine: Equatable {
         reminderFired = false
         // 确凿离开过一轮，推掉几次的历史不该带到下一轮
         snoozeStreak = 0
+        // 注意这里**不**清 awaitingRestSince：确凿离开可能正好是「点了我去走走了」
+        // 那次的收尾，要留给 resolveAwaitingRest 去认领并发出 restConfirmed。
+        // 别的地方（reset / adopt）清得早没关系，它们本来就不涉及这次确认。
         guard focusSeconds > 0 else { return false }
         let counted = focusSeconds >= t.soft
         focusSeconds = 0

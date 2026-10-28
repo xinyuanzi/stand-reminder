@@ -241,7 +241,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             thresholds: thresholds
         )
 
-        if event.settledAway {
+        if event.settledAway || event.restConfirmed {
             if event.shouldRecordHabit { recordHabit() }
             hideReminder()
             // 确凿离开过一轮，推掉几次的历史跟着归零（判定机里已清，这里同步 UI）
@@ -249,7 +249,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         if event.shouldShowReminder {
-            showReminder(deferred: event.reminderIsDeferred)
+            // restUnconfirmed：五分钟前点过「我去走走了」，但手一直没停 —— 卡片要换句话
+            showReminder(deferred: event.reminderIsDeferred,
+                         returnedSoon: event.restUnconfirmed)
         }
 
         // 静默结束（手回来了）补上克制期间欠下的升级计时
@@ -333,7 +335,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: - 弹窗
 
-    private func showReminder(deferred: Bool = false, manual: Bool = false) {
+    private func showReminder(deferred: Bool = false, manual: Bool = false,
+                              returnedSoon: Bool = false) {
         panelVisible = true
         model.visible = true
         // 手动预览不该占掉今天 8 次的名额
@@ -344,6 +347,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.stage = .sitting
         model.urgency = .soft
         model.deferred = deferred
+        // 点了「我去走走了」但手一直没停，五分钟后又弹回来 —— 卡片得自己解释这件事，
+        // 否则用户第一反应是「我明明点过休息了，这是 bug 吧」
+        model.returnedSoon = returnedSoon
         // 上一轮推掉几次要带过来：否则卡片一藏一弹就把额度刷回去了
         model.snoozeStreak = machine.snoozeStreak
 
@@ -496,15 +502,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func didRest() {
-        // 和 tick() 里的判定保持同一口径：没坐够阈值就点按钮，不算打卡。
-        // 否则「立即提醒我一次」这种测试入口也能刷天数。
-        if machine.focusSeconds >= thresholds.soft {
-            recordHabit()
-        }
-        machine.reset()
+        // 点了按钮 ≠ 真走了。手还放在键盘上继续打字的情况一点不少见
+        // （想先把这句话打完、先把这个函数写完），直接清零等于给了一个
+        // 「按一下就当休息过」的假按钮，打卡和累计同时被污染。
+        //
+        // 所以这里只是「宣称要去休息」：开一个观察窗口，窗口内熄屏够久、
+        // 或者手停够久，才算真休息（见 PresenceMachine.resolveAwaitingRest）。
+        // 没坐够阈值就点（比如「立即提醒我一次」的预览卡片）没什么可确认的，
+        // claimRest 内部会直接清零。
+        machine.claimRest(now: Date().timeIntervalSince1970, thresholds: thresholds)
         hideReminder()
         syncSnoozeStreak()
         persist()
+        updateStatus()
     }
 
     private func didSnooze() {

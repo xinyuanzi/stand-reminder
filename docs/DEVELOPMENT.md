@@ -40,10 +40,10 @@ open 歇会儿.app
 ├── package.sh                打 dmg（dist/歇会儿-<版本>.dmg）
 ├── packaging/
 │   └── 先看我.html            随 dmg 分发的首次打开说明（未签名分发的主力）
-├── Sources/                  3143 行，无第三方依赖
+├── Sources/                  3254 行，无第三方依赖
 │   ├── main.swift            NSApplication + .accessory（不占 Dock）
-│   ├── AppDelegate.swift     全部调度：喂判定机、弹窗、菜单、鼠标互动     (1013)
-│   ├── PresenceMachine.swift **判定机（纯函数，可测）**                     (239)
+│   ├── AppDelegate.swift     全部调度：喂判定机、弹窗、菜单、鼠标互动     (1023)
+│   ├── PresenceMachine.swift **判定机（纯函数，可测）**                     (335)
 │   ├── Wander.swift          游走步进、边界反弹、移动来源判定（纯函数）    (47)
 │   ├── IdleClock.swift       读系统空闲秒数（零权限）                     (13)
 │   ├── Presence.swift        熄屏/锁屏检测，确凿判定离开（零权限）        (32)
@@ -54,7 +54,7 @@ open 歇会儿.app
 │   ├── MeetingDetector.swift 摄像头/麦克风占用检测                        (54)
 │   ├── ReminderPanel.swift   NSPanel 子类，禁止成为 key/main 窗口        (7)
 │   ├── MascotAnimator.swift  姿态枚举、动作库、三层动画引擎              (378)
-│   ├── MascotCard.swift      SwiftUI 卡片视图 + 表情层覆盖               (461)
+│   ├── MascotCard.swift      SwiftUI 卡片视图 + 表情层覆盖               (466)
 │   ├── SettingsView.swift    SwiftUI 设置页「Form」                      (238)
 │   └── OnboardingView.swift  三屏首次启动引导（可离屏预览）              (231)
 ├── Resources/
@@ -384,7 +384,7 @@ cp -R Resources/mascots /tmp/ws4/
 
 | 工具 | 断言什么 |
 |---|---|
-| `PresenceTest` | 判定机 18 组时间轴场景 + 游走步进 + 移动来源判定（共 77 项检查，见上） |
+| `PresenceTest` | 判定机 19 组时间轴场景 + 游走步进 + 移动来源判定（共 102 项检查，见上） |
 | `WanderTest` | 游走在**真实面板**上生效：30fps、单帧 2px、3 秒走 180px、不越界。单测证明算术对，这个证明窗口真的会动 |
 | `MoveNotifyTest` | `setFrameOrigin` 会发 `didMoveNotification`（30 帧 30 次）、且通知里没有来源字段——「不能用鼠标键状态猜是谁移动的」这件事的事实依据 |
 | `FullscreenTest` | 真全屏下卡片是否浮得上来：在屏、跟 Space、层级、前后顺序 |
@@ -511,5 +511,6 @@ lipo -create -output 歇会儿 build/arm64 build/x86_64
 - **别用 `.id()` 强制重建来修渲染问题**。它会把外层 `repeatForever` 的常驻动画一起掐断——实测切姿态后呼吸位移恒为 0，观感变成「站起来之后是一张静止图片」。同理 `.transaction { $0.animation = nil }` 会吃掉外层的 `offset` 动画。要「只对这个值禁用动画」，用 `.animation(nil, value:)`
 - **`.scaleEffect(1)` 不是空操作**，SwiftUI 仍会为它创建变换层。`ZoomIfNeeded` 在值为 1 时直接返回内容
 - **动作序列的节奏就是观感本身**。同一批姿态，插不插过渡帧、停顿多长，决定它是「连击」还是「原地招手」。改动序列后跑 `./Tools/run_anim_test.sh`，里面钉了「出拳中间不回站姿」「第一幕收尾 ≤0.25s」这类规则；另外按**坐姿族 / 站姿族**判跨族换帧，把「打了个哈欠然后凭空站起来」这种接错序列拦在测试里
+- **按钮收到的是意图，不是结果**。「我去走走了」原来一按就清零 + 打卡，可用户按完手还放在键盘上继续打字——按钮变成了「假装休息过」。改法是：点了只算宣称，开观察窗口，熄屏够久或手停够 60 秒才认账，否则累计一秒不减、5 分钟后带解释再弹一次（`claimRest` / `resolveAwaitingRest`，[D-29](DECISIONS.md#d-29--我去走走了是一句宣称不是一道命令)）。**同类按钮**：「完成」「已读」「我已阅读并同意」——都要问一句「用户点完之后，事情真的发生了吗」
 - **给用户的每个「顺延 / 跳过 / 忽略」按钮都是产品后门**。`rewind` 类操作把累计往回拨，不记次数就可以无限点，把「提醒真的会来」这个唯一不能失守的承诺磨掉。护栏要记在判定机里而不是 UI 里——次数的生命周期就是「这一轮」的生命周期，`reset` / `settle` / `rolloverDay` / `adopt` 四条路径各清一遍，放在 UI 层就有「哪条忘了清」的可能（`PresenceMachine.snoozeStreak`，[D-28](DECISIONS.md#d-28--再等-n-分钟必须有次数上限)）
 - **测试里不要用「死等 N 秒」等待随机行为**。循环会在 1.3~3.2 秒之间歇脚，另有 22% 概率歇 5~8 秒，死等的窗口有时整段落在歇脚里，看起来像功能坏了。用轮询 + 上限（抓到就往下走，超时才算失败）

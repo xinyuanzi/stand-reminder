@@ -67,6 +67,8 @@ final class ReminderModel: ObservableObject {
     @Published var minutes: Int = 60
     /// 因为开会被压后补发的提醒
     @Published var deferred: Bool = false
+    /// 五分钟前点过「我去走走了」，但手一直没停 —— 卡片要自己解释为什么又来了
+    @Published var returnedSoon: Bool = false
     /// 被戳之后临时顶替标题的那句话，几秒后自动清空
     @Published var pokedLine: String?
     /// 面板是否在屏幕上。隐藏时停掉常驻动画，别对着不可见的视图烧电。
@@ -155,6 +157,7 @@ struct MascotCard: View {
     private var title: String {
         // 被戳之后先用一句话顶替标题，几秒后由 AppDelegate 清空
         if let line = model.pokedLine { return line }
+        if model.returnedSoon { return "你好像没走开" }
         if model.deferred { return "刚才在开会吧？" }
         if model.urgency == .strong { return "已经 \(model.minutes) 分钟了" }
         if model.stage == .sitting {
@@ -167,6 +170,8 @@ struct MascotCard: View {
     }
 
     private var subtitle: String {
+        // 别写「你没动」那种指责；点一下按钮的人确实想休息，只是没走成
+        if model.returnedSoon { return "刚才那次没算数\n这回真的站起来走走" }
         if model.deferred { return "会议结束了，先把欠的休息补上" }
         if model.urgency == .strong { return "站起来走一圈，只要两分钟" }
         if model.stage == .sitting {

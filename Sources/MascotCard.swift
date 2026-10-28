@@ -147,7 +147,10 @@ struct MascotCard: View {
         switch model.urgency {
         case .ultimate: return Color(red: 0.998, green: 0.945, blue: 0.925)
         case .strong: return Color(red: 1.0, green: 0.965, blue: 0.918)
-        case .soft: return Color(red: 0.998, green: 0.996, blue: 0.990)
+        // 软提醒原来是近乎纯白（0.998/0.996/0.990），去掉宠物底下的圆盘之后
+        // 白底会把整张卡片和桌面糊成一片。给一层极浅的冷色：和主按钮的蓝
+        // 同色系、不抢注意力，又不至于像「没有颜色」。
+        case .soft: return Color(red: 0.941, green: 0.963, blue: 0.996)
         }
     }
 
@@ -208,10 +211,14 @@ struct MascotCard: View {
     /// 各形象构图比例不同，塞进正方形头像区后的视觉占比差别很大。
     /// B 是横卧构图（宽高约 2:1），等比缩放后高度只用一半，需要放大取景。
     /// D 的坐姿帧里椅子的五条腿占掉了下半张图，不放大的话猫头鹰本体
-    /// 只有 126pt 圆圈的一半，比橘猫显小一圈。
+    /// 只有盒子的一半高，比橘猫显小一圈。
+    ///
+    /// **上限是 126/112 ≈ 1.12。** 宠物底下那个圆盘去掉之后，「放大到越界、
+    /// 让圆形把它裁掉」这条路就走不通了——裁出来是一条直边，像被刀切过。
+    /// B 原来 1.45（162pt 宽，左右各越界 18pt），现在 1.10，几乎正好填满盒子。
     private var mascotZoom: CGFloat {
         switch prefs.mascotStyle {
-        case "b": return 1.45
+        case "b": return 1.10
         case "d": return 1.30
         case "a": return 1.0
         default: return 1.0
@@ -274,10 +281,10 @@ struct MascotCard: View {
             // Button 会被 AppKit 识别为控件，优先级高于背景拖动。
             Button(action: handlePokeTap) {
                 ZStack {
-                    Circle()
-                        .fill(Color(red: 0.988, green: 0.957, blue: 0.910))
-                        .frame(width: 126, height: 126)
-
+                    // 这里原来垫了一个 126pt 的米色圆盘当「头像底」。
+                    // 去掉之后宠物直接坐在卡片底色上，整张卡片就是它的背景 ——
+                    // 圆盘那一圈边界本来就是多余的，只会把一张整卡切成
+                    // 「头像区 / 文字区」两块。
                     ZStack {
                         if let image = image(for: displayPose) {
                             Image(nsImage: image)
@@ -320,8 +327,16 @@ struct MascotCard: View {
                     .offset(mascotOffset)
                 }
                 .frame(width: 126, height: 126)
-                .clipShape(Circle())
-                .contentShape(Circle())
+                // 裁成圆角矩形而不是圆形。
+                //
+                // 圆形裁剪对 a 橘猫 / c 小熊 / e 柴犬 是空操作（素材包围盒完全在圆内），
+                // 但 b 水獭被裁掉 8.3%（zoom 1.45，最远越界 18pt）、
+                // d 猫头鹰 2.3%（6.2pt）—— 这两只是靠这个 clip 在兜住缩放后的溢出，
+                // 直接删掉会让水獭横向压到卡片边缘、猫头鹰往下顶到标题。
+                // 换成圆角矩形：既不再把宠物切出一个圆形的「头像一个」，
+                // 又保留了「不许溢出盒子」这层保护。
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .contentShape(Rectangle())
             }
             .buttonStyle(BareButtonStyle())
             .padding(.top, 2)

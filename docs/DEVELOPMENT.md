@@ -323,7 +323,7 @@ swiftc -O -target arm64-apple-macos13.0 -framework AppKit -framework SwiftUI \
   Sources/MascotCard.swift Sources/ReminderPanel.swift \
   Tools/GifShot/main.swift -o /tmp/gs/run
 cp -R Resources/mascots /tmp/gs/
-/tmp/gs/run d 100 0.1 /tmp/gifshot full
+/tmp/gs/run a 100 0.1 /tmp/gifshot full   # 参数要和 Prefs.mascotStyle 一致，见下
 
 # ② 拼 GIF
 python3 Tools/make_hero_gif.py /tmp/gifshot docs/images/card-routine.gif
@@ -331,6 +331,7 @@ python3 Tools/make_hero_gif.py /tmp/gifshot docs/images/card-routine.gif
 
 两个必须知道的点：
 
+- **`style` 参数只决定动作库，不决定形象。** 卡片贴的图取的是 `Prefs.shared.mascotStyle`，而裸可执行文件用的 `UserDefaults.standard` 会读到**本机真实偏好**。两者不一致时录出来就是「橘猫的身体 + 猫头鹰的动作」（猫头鹰没有出拳，那几下会退化成 `up`/`stand`）。录之前先确认参数和偏好是同一只。
 - **不能用 `WindowShot` 的 `cacheDisplay` 抓 GIF**。它抓的是**模型值**，而待机层的呼吸/摆动全是 `repeatForever` 的 CA 插值——模型值永远不变，抓出来只有姿势切换、中间一片静止，做成 GIF 比真实效果还差。`GifShot` 改用 `CGWindowListCreateImage` 读窗口合成结果，插值状态才算数（抓自己的窗口不需要屏幕录制权限）。
 - **`ReminderModel.visible` 默认是 `false`**，而待机动画在 `onAppear` 里要靠它才启动。测试工具忘了设这一行，抓出来的就是幻灯片。设了之后帧间差异立刻从「大量 0」变成每帧都有几百到几千像素。
 

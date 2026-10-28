@@ -37,14 +37,30 @@ cp "$README_HTML" "$STAGE/先看我.html"
 mkdir -p dist
 rm -f "$DMG"
 
-# 优先用新的 diskutil（hdiutil create 已标记弃用）；老系统上没有就退回去。
+# 优先用新的 diskutil（hdiutil create 已标记弃用）；用不了就退回去。
 # 注意 source 是**文件夹**、format 用 UDZO（压缩只读），体积最小。
-if diskutil image create from --help > /dev/null 2>&1; then
+#
+# 不能只靠 `diskutil image create from --help` 探测：在 macOS 14 上这条
+# 探测返回 0（diskutil 对不认识的子命令也给 0），但真正的命令不存在，
+# 于是「探测通过 → 执行失败 → 直接 exit 1」，永远退不到 hdiutil。
+# CI 第一次跑就是这么红的。现在改成「一条路走不通就真走另一条」。
+make_with_diskutil() {
+    diskutil image create from --help > /dev/null 2>&1 || return 1
     diskutil image create from --volumeName "$APP_NAME" --format UDZO \
-        "$STAGE" "$DMG" > /dev/null 2>&1 || { echo "diskutil 打包失败"; exit 1; }
-else
+        "$STAGE" "$DMG" > /dev/null 2>&1 || return 1
+    [[ -s "$DMG" ]]
+}
+
+make_with_hdiutil() {
     hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -fs HFS+ \
-        -format UDZO -ov "$DMG" > /dev/null || { echo "hdiutil 打包失败"; exit 1; }
+        -format UDZO -ov "$DMG" > /dev/null || return 1
+    [[ -s "$DMG" ]]
+}
+
+if ! make_with_diskutil; then
+    echo "==> diskutil 用不了，退回 hdiutil"
+    rm -f "$DMG"
+    make_with_hdiutil || { echo "hdiutil 打包失败"; exit 1; }
 fi
 
 echo "==> $DMG  ($(du -h "$DMG" | cut -f1))"

@@ -39,7 +39,13 @@ if args.count > 1 && args[1] == "onboarding" {
 
 let style = args.count > 1 ? args[1] : "c"
 let poseName = args.count > 2 ? args[2] : "sit"
-let urgency: ReminderUrgency = (args.count > 3 && args[3] == "strong") ? .strong : .soft
+let urgencyName = args.count > 3 ? args[3] : "soft"
+let urgency: ReminderUrgency
+switch urgencyName {
+case "strong": urgency = .strong
+case "ultimate": urgency = .ultimate
+default: urgency = .soft
+}
 
 Prefs.shared.mascotStyle = style
 let model = ReminderModel()
@@ -59,4 +65,4 @@ let card = MascotCard(model: model, animator: animator, onRest: {}, onSnooze: {}
 let suffix = model.canSnooze ? "" : "_nosnooze"
 let tag = model.returnedSoon ? "_soon" : suffix
 render(card, size: NSSize(width: 342, height: 360),
-       to: "/tmp/card_\(style)_\(poseName)_\(urgency == .strong ? "strong" : "soft")\(tag).png")
+       to: "/tmp/card_\(style)_\(poseName)_\(urgencyName)\(tag).png")

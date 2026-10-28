@@ -40,6 +40,9 @@ enum ReminderStage {
 enum ReminderUrgency {
     case soft
     case strong
+    /// 强提醒之后还是不理：卡片开始缓慢跟着光标走。
+    /// 这是最后一档，再往上就只剩「不让人用电脑」了，那条线不走。
+    case ultimate
 }
 
 /// 视线方向。以头像中心为原点，按鼠标所在方位判定。
@@ -126,38 +129,55 @@ struct MascotCard: View {
 
     private var alertColor: Color { Color(red: 0.72, green: 0.24, blue: 0.04) }
 
+    /// 终极提醒用的深红。强提醒是橙、终极是红——颜色本身就说明「又升了一档」，
+    /// 不靠文案去解释。
+    private var ultimateColor: Color { Color(red: 0.66, green: 0.13, blue: 0.10) }
+
     private var titleColor: Color {
-        if model.urgency == .strong || model.stage == .stretching {
-            return alertColor
+        switch model.urgency {
+        case .ultimate: return ultimateColor
+        case .strong: return alertColor
+        case .soft: return model.stage == .stretching
+            ? alertColor
+            : Color(red: 0.11, green: 0.11, blue: 0.12)
         }
-        return Color(red: 0.11, green: 0.11, blue: 0.12)
     }
 
     private var cardFill: Color {
-        model.urgency == .strong
-            ? Color(red: 1.0, green: 0.965, blue: 0.918)
-            : Color(red: 0.998, green: 0.996, blue: 0.990)
+        switch model.urgency {
+        case .ultimate: return Color(red: 0.998, green: 0.945, blue: 0.925)
+        case .strong: return Color(red: 1.0, green: 0.965, blue: 0.918)
+        case .soft: return Color(red: 0.998, green: 0.996, blue: 0.990)
+        }
     }
 
     private var strokeColor: Color {
-        model.urgency == .strong
-            ? Color(red: 0.85, green: 0.42, blue: 0.10).opacity(pulse ? 0.85 : 0.25)
-            : Color.black.opacity(0.08)
+        switch model.urgency {
+        case .ultimate:
+            return ultimateColor.opacity(pulse ? 0.95 : 0.35)
+        case .strong:
+            return Color(red: 0.85, green: 0.42, blue: 0.10).opacity(pulse ? 0.85 : 0.25)
+        case .soft:
+            return Color.black.opacity(0.08)
+        }
     }
 
     /// 主按钮底色。面板永远是 non-activating、不成为 key window，
     /// 系统 .borderedProminent 会按「窗口未激活」渲染成浅底浅字（等于看不见），
     /// 所以按钮外观全部自绘，不依赖系统样式。
     private var primaryFill: Color {
-        model.urgency == .strong
-            ? Color(red: 0.78, green: 0.30, blue: 0.05)
-            : Color(red: 0.13, green: 0.44, blue: 0.90)
+        switch model.urgency {
+        case .ultimate: return Color(red: 0.72, green: 0.16, blue: 0.12)
+        case .strong: return Color(red: 0.78, green: 0.30, blue: 0.05)
+        case .soft: return Color(red: 0.13, green: 0.44, blue: 0.90)
+        }
     }
 
     private var title: String {
         // 被戳之后先用一句话顶替标题，几秒后由 AppDelegate 清空
         if let line = model.pokedLine { return line }
         if model.returnedSoon { return "你好像没走开" }
+        if model.urgency == .ultimate { return "我就跟着你了" }
         if model.deferred { return "刚才在开会吧？" }
         if model.urgency == .strong { return "已经 \(model.minutes) 分钟了" }
         if model.stage == .sitting {
@@ -172,6 +192,9 @@ struct MascotCard: View {
     private var subtitle: String {
         // 别写「你没动」那种指责；点一下按钮的人确实想休息，只是没走成
         if model.returnedSoon { return "刚才那次没算数\n这回真的站起来走走" }
+        // 终极提醒不再讲道理，只讲条件：站起来，我就停。
+        // 「跟着你」不是威胁，是字面描述——它真的会跟着光标走。
+        if model.urgency == .ultimate { return "站起来两分钟\n我立刻走开" }
         if model.deferred { return "会议结束了，先把欠的休息补上" }
         if model.urgency == .strong { return "站起来走一圈，只要两分钟" }
         if model.stage == .sitting {
@@ -348,7 +371,7 @@ struct MascotCard: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(strokeColor, lineWidth: model.urgency == .strong ? 1.6 : 0.5)
+                .stroke(strokeColor, lineWidth: model.urgency == .soft ? 0.5 : 1.6)
         )
         .scaleEffect(poked ? 0.965 : 1)
         // 四周留出阴影绘制空间，否则窗口边界会把柔边和圆角切出生硬直角
@@ -392,10 +415,10 @@ struct MascotCard: View {
         }
     }
 
-    /// 呼吸式描边只在强提醒时才跑。之前无条件 repeatForever，
+    /// 呼吸式描边只在强提醒和终极提醒时跑。之前无条件 repeatForever，
     /// 等于让 SwiftUI 在卡片整个可见期间持续 60fps 重绘，纯浪费电。
     private func syncPulse() {
-        if model.urgency == .strong {
+        if model.urgency != .soft {
             withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) {
                 pulse = true
             }

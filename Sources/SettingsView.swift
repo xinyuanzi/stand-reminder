@@ -89,6 +89,19 @@ struct SettingsView: View {
                 Stepper(value: $prefs.escalateSeconds, in: 5...60, step: 1) {
                     labeled("升级为起身动作", "\(Int(prefs.escalateSeconds)) 秒无响应后切换姿态")
                 }
+
+                // 和上面两项排在一起，读下来就是一条升级阶梯：
+                // 游走 → 起身动作 → 强提醒 → 终极提醒。
+                Toggle(isOn: $prefs.ultimateEnabled) {
+                    labeled("终极提醒", "强提醒之后还不理会，卡片开始缓慢跟着鼠标走")
+                }
+                if prefs.ultimateEnabled {
+                    Stepper(value: $prefs.ultimateMinutes, in: 1...30, step: 1) {
+                        labeled("升级为终极提醒",
+                                "强提醒响后 \(prefs.ultimateMinutes) 分钟仍不理会才升级")
+                    }
+                }
+
                 Stepper(value: $prefs.silentMinutes, in: 1...30, step: 1) {
                     labeled("静默判定", "\(prefs.silentMinutes) 分钟没碰键鼠算静默：提醒照弹，但不再升级、不追鼠标")
                 }

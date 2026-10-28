@@ -17,8 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var tickTimer: Timer?
     private var escalateTimer: Timer?
     private var wanderTimer: Timer?
-    /// 强提醒阶段贴光标用的定时器
+    /// 终极提醒贴光标用的定时器
     private var chaseTimer: Timer?
+    /// 强提醒响了之后，倒计时到终极提醒
+    private var ultimateTimer: Timer?
     /// 视线跟随用的定时器。15fps 够用，比动作循环低一档，省电。
     private var gazeTimer: Timer?
     /// 最近的戳击时间，用来判断「连戳三次」
@@ -279,6 +281,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             startWandering()
         }
 
+        // 追光标的自愈。同一套理由：被拖走、连戳躲闪、进静默都会停掉它，
+        // 少恢复一条就是「终极提醒定在原地不跟了」。
+        // 静默期间故意不装：手没在动，追一个不动的光标没有意义。
+        if panelVisible, model.urgency == .ultimate, prefs.ultimateEnabled,
+           !machine.inSilence, chaseTimer == nil,
+           Date().timeIntervalSince(lastManualMoveAt) > 1.5 {
+            startChasing()
+        }
+
         persistIfNeeded(now)
         updateStatus()
     }
@@ -427,8 +438,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.minutes = Int(machine.focusSeconds / 60)
         panel?.level = .screenSaver
         NSSound(named: NSSound.Name("Glass"))?.play()
-        // 强提醒才黏人：改成贴着光标跑，比游走更有存在感
+        // 强提醒**不追光标**，改成定住。
+        //
+        // 原来这里直接 startChasing，结果「强提醒」和「终极提醒」是同一件事，
+        // 三档升级实际上只有两档。现在分工明确：
+        //   软提醒   沿屏幕下缘来回游走（12 秒无响应起）
+        //   强提醒   停住 + 提到屏保层级 + 提示音 + 变橙
+        //   终极提醒 缓慢跟着光标，躲不掉
+        // 每一档只加一个新行为，用户才分得清「它又升级了」。
+        stopWandering()
+        stopUltimateCountdown()
+        guard prefs.ultimateEnabled else { return }
+        let t = Timer(timeInterval: TimeInterval(max(1, prefs.ultimateMinutes) * 60),
+                      target: self, selector: #selector(promoteToUltimate),
+                      userInfo: nil, repeats: false)
+        RunLoop.main.add(t, forMode: .common)
+        ultimateTimer = t
+    }
+
+    private func stopUltimateCountdown() {
+        ultimateTimer?.invalidate()
+        ultimateTimer = nil
+    }
+
+    @objc private func promoteToUltimate() {
+        // 一次性 Timer 跑完不会自己清引用，不置 nil 的话下次判断会以为还在倒计时
+        ultimateTimer = nil
+        guard panelVisible, model.urgency == .strong else { return }
+        model.urgency = .ultimate
+        model.minutes = Int(machine.focusSeconds / 60)
+        NSSound(named: NSSound.Name("Glass"))?.play()
         startChasing()
+        updateStatus()
     }
 
     /// 以鼠标所在屏幕为准。NSScreen.main 会随窗口焦点在双屏间漂移，不能作为定位依据。
@@ -472,6 +513,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         stopEscalation()
         stopWandering()
         stopChasing()
+        stopUltimateCountdown()
         stopGazeTracking()
         machine.clearDeferred()
         model.pokedLine = nil
@@ -604,7 +646,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: - 鼠标互动
     //
     // 性格分级：软提醒阶段克制（被戳抖一下就好，不做多余动作）；
-    // 一直不理它升到强提醒，才开始追着光标跑 —— 「越来越烦」本身就是提醒强度的表达。
+    // 一直不理它升到强提醒，才放开手（挪到屏保层级、出声、变橙）；
+    // 再不理就进终极提醒，缓着跟光标走 —— 「越来越烦」本身就是提醒强度的表达。
 
     private func handlePoke() {
         let now = Date()
@@ -658,10 +701,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    /// 强提醒阶段：贴着光标走，挡在你正在点的位置旁边。
-    /// 比左右来回游走更有存在感，而且不会真的盖住你点东西的地方。
+    /// 终极提醒：跟着光标走，但走得很慢。
+    ///
+    /// 速度是刻意压住的：单帧最多 2.4px、比例系数 0.055，30fps 下约 72px/s。
+    /// 原来这一档（当时的强提醒）用的是 7px/帧 + 0.16 的比例，光标一动卡片就窜过去，
+    /// 那是「晃眼」而不是「催你起来」——追得越急，人越烦，越不想站起来。
+    ///
+    /// 门槛用 `ultimateEnabled` 而不是 `wanderEnabled`：终极提醒是最后一档，
+    /// 该由它自己的开关决定，不该被「要不要沿下缘游走」连带关掉。
     private func startChasing() {
-        guard prefs.wanderEnabled, chaseTimer == nil, panel != nil else { return }
+        guard prefs.ultimateEnabled, chaseTimer == nil, panel != nil else { return }
         stopWandering()
         let t = Timer(timeInterval: 1.0 / 30.0, target: self, selector: #selector(chaseStep),
                       userInfo: nil, repeats: true)
@@ -678,23 +727,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let p = panel, p.isVisible,
               Date().timeIntervalSince(lastManualMoveAt) > 0.8 else { return }
 
+        // 静默就别追了。光标停在原地不动，追过去只是白挪一下，
+        // 反而像在催一个根本不在屏幕前的人。把定时器停掉、交给 tick 的自愈
+        // 在手回来之后重新装上，比每秒空转三十次干净。
+        guard !machine.inSilence else {
+            stopChasing()
+            return
+        }
+
         let rect = (p.screen ?? activeScreen)?.visibleFrame ?? p.frame
         let mouse = NSEvent.mouseLocation
         // 光标跑到别的屏幕去了就不追，免得两个屏来回跳
         guard NSMouseInRect(mouse, rect, false) else { return }
 
-        let minX = rect.minX + panelMargin
-        let maxX = rect.maxX - p.frame.width - panelMargin
-        guard maxX > minX else { return }
+        // 光标已经压在卡片上，就停在原地。
+        //
+        // 不设这条会出一个很讨厌的问题：卡片永远停在光标侧边 96pt 处，
+        // 手一伸过去它就跟着挪，两个按钮一个都点不着 —— 这就从「催你起来」
+        // 变成「不让你选」。追的目的是让它一直在视野里，不是让人抓不住。
+        // 手伸过来就停，反而更像宠物：会跟着你，但被摸的时候不跑。
+        // （真躲是另一回事，连戳三次那个 `dodge()` 是故意的。）
+        guard !NSMouseInRect(mouse, p.frame, false) else { return }
 
-        // 停在光标旁边而不是正中，留出一点「不挡手」的距离
-        let target = min(max(mouse.x - p.frame.width * 0.5, minX), maxX)
-        let dx = target - p.frame.origin.x
-        guard abs(dx) > 14 else { return }
+        let w = p.frame.width
+        let h = p.frame.height
+        let margin = panelMargin
+        // 与光标保持的距离。太小会盖住你正在点的地方，太大又像没跟着。
+        // 96pt 大约是一个按钮的宽度，够躲开、又明显在跟着。
+        let gap: CGFloat = 96
 
-        // 比例追随：越远走得越快，接近时自然减速，不会一顿一顿
-        let step = max(-7.0, min(7.0, dx * 0.16))
-        let next = NSPoint(x: p.frame.origin.x + step, y: rect.minY + panelMargin)
+        // 横向优先放右侧，右边放不下就翻到左侧
+        var tx = mouse.x + gap
+        if tx + w > rect.maxX - margin { tx = mouse.x - gap - w }
+        tx = min(max(tx, rect.minX + margin), max(rect.minX + margin, rect.maxX - w - margin))
+
+        // 纵向跟着光标居中，再夹进可视区
+        var ty = mouse.y - h * 0.5
+        ty = min(max(ty, rect.minY + margin), max(rect.minY + margin, rect.maxY - h - margin))
+
+        let dx = tx - p.frame.origin.x
+        let dy = ty - p.frame.origin.y
+        let dist = hypot(dx, dy)
+        guard dist > 24 else { return }
+
+        // 比例追随 + 单帧上限：越远走得越快，接近时自然减速。
+        // 按「距离向量」归一化，横向纵向速度一致，斜着走不会变快。
+        let stepLen = min(2.4, dist * 0.055)
+        let next = NSPoint(x: p.frame.origin.x + dx / dist * stepLen,
+                           y: p.frame.origin.y + dy / dist * stepLen)
         autoMovedTo = next
         p.setFrameOrigin(next)
     }
@@ -762,9 +842,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             guard let self, self.panelVisible else { return }
             guard Date().timeIntervalSince(self.lastManualMoveAt) >= 0.9 else { return }
-            if self.model.urgency == .strong {
+            if self.model.urgency == .ultimate {
+                // 只有终极提醒会回到「跟着你」。强提醒被拖走就停在你放的
+                // 地方 —— 是你主动挪的，尊重这个选择；否则「拖一下就变成
+                // 会追人」等于提前把最后一档放出来，三档又糊成一档。
                 self.startChasing()
-            } else if self.model.stage == .stretching {
+            } else if self.model.urgency == .soft,
+                      self.model.stage == .stretching {
                 // 软提醒阶段被拖走也要接着游走，否则碰一下卡片就永久定住。
                 // 但只有**已经升级过**（12 秒无响应、进入伸懒腰）才恢复 ——
                 // 刚弹出来的头 12 秒本来就不该动，拖它一下也不该提前开跑。
@@ -871,6 +955,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         strongItem.target = self
         menu.addItem(strongItem)
 
+        // 没有这个入口，验证第三档就只能真坐等 N 分钟。
+        let ultimateItem = NSMenuItem(title: "预览终极提醒",
+                                      action: #selector(testUltimate), keyEquivalent: "")
+        ultimateItem.target = self
+        menu.addItem(ultimateItem)
+
         let resetItem = NSMenuItem(title: "重置计时", action: #selector(resetTimer), keyEquivalent: "r")
         resetItem.target = self
         menu.addItem(resetItem)
@@ -920,6 +1010,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         showReminder(manual: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             self?.upgradeToStrong()
+        }
+    }
+
+    @objc private func testUltimate() {
+        showReminder(manual: true)
+        // 分两拍：先让强提醒的样子露一下，再进最后一档。
+        // 一口气跳到底看不出「升级」这件事本身。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            self?.upgradeToStrong()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
+            guard let self else { return }
+            // 跳过 N 分钟倒计时。不先停掉的话，强提醒那一步装的定时器
+            // 会在几分钟后再弹一次，虽然那时已经不在强提醒而会被拦下，但没必要留着。
+            self.stopUltimateCountdown()
+            self.promoteToUltimate()
         }
     }
 

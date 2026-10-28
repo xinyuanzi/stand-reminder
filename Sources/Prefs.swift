@@ -41,6 +41,16 @@ final class Prefs: ObservableObject {
         didSet { store.set(strongMinutes, forKey: "strongMinutes") }
     }
 
+    /// 终极提醒：强提醒之后还是不理，卡片开始缓慢跟着光标走
+    @Published var ultimateEnabled: Bool {
+        didSet { store.set(ultimateEnabled, forKey: "ultimateEnabled") }
+    }
+
+    /// 强提醒响了之后再过多少分钟升到终极提醒
+    @Published var ultimateMinutes: Int {
+        didSet { store.set(ultimateMinutes, forKey: "ultimateMinutes") }
+    }
+
     /// 摄像头/麦克风被占用时暂缓弹窗，结束后补发
     @Published var meetingAware: Bool {
         didSet { store.set(meetingAware, forKey: "meetingAware") }
@@ -91,6 +101,8 @@ final class Prefs: ObservableObject {
         longSilentMinutes = store.object(forKey: "longSilentMinutes") as? Int
             ?? store.object(forKey: "awayMinutes") as? Int ?? 30
         strongMinutes = store.object(forKey: "strongMinutes") as? Int ?? 90
+        ultimateEnabled = store.object(forKey: "ultimateEnabled") as? Bool ?? true
+        ultimateMinutes = store.object(forKey: "ultimateMinutes") as? Int ?? 5
         meetingAware = store.object(forKey: "meetingAware") as? Bool ?? true
         dailyCap = store.object(forKey: "dailyCap") as? Int ?? 8
         mascotStyle = store.string(forKey: "mascotStyle") ?? "c"

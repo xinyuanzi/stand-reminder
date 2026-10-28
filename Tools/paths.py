@@ -8,7 +8,7 @@
     └── mascots/{style}/{pose}.png        抠图对齐后的成品，512×512，透明
 
 `style`：a 橘猫 / b 水獭 / c 小熊 / d 猫头鹰 / e 柴犬
-`pose` ：sit / blink / yawn1 / yawn2 / scratch / stand / up / punch1 / punch2
+`pose` ：sit / blink / yawn1 / yawn2 / scratch / standup / stand / up / punch1 / punch2
          / flap1 / flap2 / sitdown / gaze_left / gaze_right / gaze_up / gaze_down
 
 路径由本文件计算（基于 __file__，不依赖当前工作目录），

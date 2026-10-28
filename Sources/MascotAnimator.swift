@@ -19,6 +19,9 @@ enum MascotPose: String {
     case stand
     /// 伸懒腰（站着）
     case up
+    /// 从椅子上起身到一半（介于 sit 与 stand 之间）。
+    /// 只有橘猫、猫头鹰、柴犬有椅子的三只出了这个素材；其余两只缺帧时会退回 stand。
+    case standup
     /// 坐回椅子
     case sitdown
     /// 视线跟随：朝鼠标方向的四个变体（只在坐姿上生效）
@@ -54,7 +57,10 @@ enum MascotRoutine {
 
     /// 第二幕 · 卖力
     static let act2: [(MascotPose, TimeInterval)] = [
-        (.stand, 0.34),
+        // 起身分两步：先半起着（屁股离座、身体前倾），再站直。
+        // 直接 sit → stand 是一步跨过「椅子中央 → 椅子右侧」的位移，
+        // 看起来就是猫原地瞬移了一下。
+        (.standup, 0.26), (.stand, 0.30),
         // 伸到一半先停一下再伸完，比一次拉满像活的
         (.up, 0.62), (.stand, 0.26),
         (.up, 0.72), (.stand, 0.30),

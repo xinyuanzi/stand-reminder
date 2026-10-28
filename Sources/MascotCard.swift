@@ -209,6 +209,9 @@ struct MascotCard: View {
         case .up: return "up"
         case .stand: return "up"
         case .sitdown: return "sit"
+        // 水獭（趴着）和小熊（坐在地上）没有椅子，本来就没有「从椅子上起身」
+        // 这个动作，退到站定即可
+        case .standup: return "stand"
         // 只有猫头鹰有振翅素材，其它形象退到语义最接近的展翅/站定
         case .flap1: return "up"
         case .flap2: return "stand"

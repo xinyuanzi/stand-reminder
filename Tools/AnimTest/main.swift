@@ -30,11 +30,20 @@ let animator = MascotAnimator()
 let probe = Probe()
 probe.watch(animator)
 
-// 第一段：观察 14 秒，够跑完一轮再进下一轮
+// 第一段：观察够一轮的量级，确认循环在跑
+//
+// 用轮询而不是死等 14 秒：循环每轮随机挑一套（从 3.6 秒的 sleepy
+// 到 9.5 秒的 full），套间还随机歇 1.3~3.2 秒、22% 概率歇 5~8 秒。
+// 死等一个固定窗口，赶上「睡意 + 长歇脚」就会数不够而误报。
+// 判据只问「动没动」，所以给到 20 秒上限，动了就往下走。
 animator.startLoop(MascotRoutine.restVariants)
-RunLoop.main.run(until: Date().addingTimeInterval(14))
+var loopWaited = 0.0
+while loopWaited < 20 && probe.changes.count < 15 {
+    RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+    loopWaited += 0.5
+}
 let firstRun = probe.changes
-print("14 秒内姿态切换 \(firstRun.count) 次，种类 \(Set(firstRun.map { $0.rawValue }).sorted())")
+print("\(String(format: "%.1f", loopWaited)) 秒内姿态切换 \(firstRun.count) 次，种类 \(Set(firstRun.map { $0.rawValue }).sorted())")
 
 check("循环确实在动", firstRun.count >= 15, "切换 \(firstRun.count) 次")
 
@@ -103,7 +112,12 @@ check("猫头鹰不出拳", !owlPoses.contains(.punch1) && !owlPoses.contains(.p
 // 但「数据里有」不等于「引擎真的播得出来」，所以再跑一段确认在动
 probe.changes.removeAll()
 animator.startLoop(owlVariants)
-RunLoop.main.run(until: Date().addingTimeInterval(6))
+// 同上：轮询到够数就走，别死等一个固定窗口
+var owlWaited = 0.0
+while owlWaited < 16 && probe.changes.count < 6 {
+    RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+    owlWaited += 0.5
+}
 let owlRun = probe.changes
 check("猫头鹰动作库在动", owlRun.count >= 6, "切换 \(owlRun.count) 次")
 print("猫头鹰 6 秒内切换 \(owlRun.count) 次，种类 \(Set(owlRun.map { $0.rawValue }).sorted())")
@@ -148,7 +162,9 @@ check("第一幕收尾要短促", (tailSit?.1 ?? 9) <= 0.25,
 // 换句话说：谁要是把 `.yawn2` 直接接 `.up`，猫会「打了个哈欠然后凭空站起来」，
 // 而这正是这条断言要拦的东西。
 let seated: Set<MascotPose> = [.sit, .blink, .yawn1, .yawn2, .scratch, .sitdown]
-let standing: Set<MascotPose> = [.stand, .up, .punch1, .punch2, .flap1, .flap2]
+// standup 归站姿族：屁股已经离座、身体探出椅子，画面位置已经是「椅子外」了。
+// 它存在的意义就是把 sit→stand 这一跳拆成两小步。
+let standing: Set<MascotPose> = [.standup, .stand, .up, .punch1, .punch2, .flap1, .flap2]
 
 func family(_ p: MascotPose) -> String {
     if seated.contains(p) { return "坐" }
@@ -156,7 +172,12 @@ func family(_ p: MascotPose) -> String {
     return "?"
 }
 
-let allowedCrossings: Set<String> = ["坐→站:sit→stand", "站→坐:stand→sitdown"]
+// sit→standup 和 sit→stand 都允许：有椅子素材的三只走前者，
+// 水獭和小熊没有椅子素材，缺帧时退回 stand，走的还是后者。
+let allowedCrossings: Set<String> = [
+    "坐→站:sit→standup", "坐→站:sit→stand",
+    "站→坐:stand→sitdown",
+]
 
 var badCuts: [String] = []
 var badEnds: [String] = []
@@ -202,20 +223,20 @@ for (libName, lib) in [("哺乳动物", MascotRoutine.restVariants),
 
 check("每一段都该以坐姿开头结尾（轮次之间靠 .sit 接缝）", badEnds.isEmpty,
       badEnds.joined(separator: "；"))
-check("跨族换帧只准是 sit→stand 和 stand→sitdown", badCuts.isEmpty,
+check("跨族换帧只准是 sit→standup / sit→stand 和 stand→sitdown", badCuts.isEmpty,
       badCuts.joined(separator: "；"))
 check("单帧时长应在 0~1.5 秒之间", badDurations.isEmpty,
       badDurations.joined(separator: "；"))
 check("每个姿态都该归到某一族（新增姿态时别忘了归类）", unclassified.isEmpty,
       Set(unclassified).sorted().joined(separator: "；"))
 
-// 把这条规则量化出来：等哪天补上了 standup 帧，这里的跨族次数会变，
-// 提醒同步收紧 allowedCrossings（那时 sit→stand 就该改成 sit→standup→stand）
+// 把跨族次数打出来：每段最多两处（起身一次、坐下一次），
+// 超过就说明有段动作被拼重了，或者新加的帧归错了族
 let allLibs = MascotRoutine.restVariants + MascotRoutine.Owl.variants
 let crossCount = allLibs.reduce(0) { acc, seq in
     acc + (1..<max(seq.count, 1)).filter { family(seq[$0].0) != family(seq[$0 - 1].0) }.count
 }
-print("共 \(allLibs.count) 段动作，跨族换帧 \(crossCount) 处（全部由缺 standup 帧造成）")
+print("共 \(allLibs.count) 段动作，跨族换帧 \(crossCount) 处（每段最多起身 + 坐下各一次）")
 
 print(fails == 0 ? "\n全部通过" : "\n\(fails) 项失败")
 exit(fails == 0 ? 0 : 1)

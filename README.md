@@ -1,5 +1,11 @@
 # 歇会儿 · 一个住在屏幕下角的小动物
 
+> **English in brief** — *歇会儿* (xiē huì ér, "take a breather") is a macOS menu bar app that reminds you to stand up. Unlike a plain timer, the reminder is an **animated animal**: it yawns, climbs off its chair to stretch, throws a couple of punches, then slumps back and stares at you. You can poke it, it dodges, and it follows your cursor with its eyes.
+>
+> **Requires** macOS 13+ on Apple Silicon. The app is **unsigned** (no Apple Developer account), so macOS blocks it on first launch — see [安装](#安装) for the three ways around it. **The interface is Chinese only for now**; an English UI is on the roadmap.
+>
+> The rest of this README is in Chinese. Every claim below is backed by a test in `Tools/` — the project's entire premise is that a reminder you don't trust is worse than no reminder.
+
 > 你坐久了，它会自己冒出来提醒你起来走走。你不管它，它就一直赖在那儿不走。
 
 一个 macOS 菜单栏久坐提醒工具。和普通定时器不同的是：**提醒你的是只会动的动物**——它打哈欠、从椅子上下来伸懒腰、捶两拳，然后摊回椅子上看着你。它可以被戳、会躲、会盯着你的鼠标看。

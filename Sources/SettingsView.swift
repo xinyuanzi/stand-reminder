@@ -51,7 +51,10 @@ struct SettingsView: View {
                     labeled("软提醒", "\(prefs.focusMinutes) 分钟时弹窗")
                 }
                 Stepper(value: $prefs.strongMinutes, in: 30...240, step: 5) {
-                    labeled("强提醒", "\(prefs.strongMinutes) 分钟时升级")
+                    // 原来是「\(N) 分钟时升级」，读起来像「坐满 N 分钟一定升强提醒」。
+                    // 实际条件还多两条：卡片必须一直挂着没人处理、且当前不在静默期。
+                    // 点过「再等一会儿」的话累计会回退，永远到不了这个数。
+                    labeled("强提醒", "累计 \(prefs.strongMinutes) 分钟仍不理会才升级")
                 }
                 Stepper(value: $prefs.dailyCap, in: 1...30) {
                     labeled("每日上限", "最多提醒 \(prefs.dailyCap) 次")

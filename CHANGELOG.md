@@ -6,6 +6,33 @@
 
 ---
 
+## v0.12.9 · 2026-10-28
+
+**bundle id 从 `cn.yuou.xiehuier` 换成 `io.github.xinyuanzi.xiehuier`。**
+
+公开仓库之后才注意到：原来的 id 用的是公司域名 `yuou`，跟着 `Info.plist`、LaunchAgent 的 plist 文件名、卸载说明一起公开了。不是技术问题，是「拿一个不属于这个项目的域名做反向 DNS」——这条域名不是我的，不该出现在这里。
+
+为什么换成 `io.github.xinyuanzi.*`：`xinyuanzi.github.io` 这个域名确实归仓库作者所有，反向 DNS 就是 `io.github.xinyuanzi`，不需要额外买域名，也不欠谁的人情。
+
+**为什么必须趁现在改**：bundle id 同时是 LaunchAgent 的 label，也是 `UserDefaults` 的域（`defaults` 里那一整份设置都在 `cn.yuou.xiehuier` 下）。改它等于让已装用户的偏好、打卡记录、开机自启项全部失效。现在一个真实用户都没有，成本是零；等发了 Release 再改，就得写一段迁移代码，还得一直留着它。
+
+**本机做的一次性迁移**（没写进代码）：
+
+```bash
+defaults export cn.yuou.xiehuier /tmp/old-prefs.plist
+defaults import io.github.xinyuanzi.xiehuier /tmp/old-prefs.plist
+rm -f ~/Library/LaunchAgents/cn.yuou.xiehuier.plist
+# 再按新 label 重写一份 LaunchAgent
+```
+
+> 没在代码里加自动迁移：这个项目还没有用户，写一段「迁就历史包袱」的代码是在给未来的自己留垃圾。真到了有用户的阶段，这段逻辑就该由用户的升级路径承担，而不是塞进主流程。
+
+迁移后核对：`mascotStyle=a`、`habit.streak=3`、`quietEnabled=1` 全部继承，打卡记录没丢。
+
+涉及 7 个文件 8 处：`Resources/Info.plist`、`Sources/LaunchAtLogin.swift`、`Tools/LoginTest/main.swift`、`README.md`、`docs/DECISIONS.md`、`docs/DEVELOPMENT.md`（2 处）、`packaging/先看我.html`。
+
+---
+
 ## v0.12.8 · 2026-10-28
 
 **去掉宠物底下的圆形色板，整张卡片就是它的背景。** 顺手给软提醒也补了卡片底色。

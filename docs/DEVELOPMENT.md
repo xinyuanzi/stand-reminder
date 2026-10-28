@@ -400,8 +400,8 @@ cp -R Resources/mascots /tmp/ws4/
 
 ```bash
 cp Resources/Info.plist /tmp/pv/Info.plist
-plutil -replace CFBundleIdentifier -string cn.yuou.xiehuier.preview /tmp/pv/Info.plist
-defaults delete cn.yuou.xiehuier.preview      # 清一次，保证是全新用户视角
+plutil -replace CFBundleIdentifier -string io.github.xinyuanzi.xiehuier.preview /tmp/pv/Info.plist
+defaults delete io.github.xinyuanzi.xiehuier.preview      # 清一次，保证是全新用户视角
 ```
 
 两个原因缺一不可：

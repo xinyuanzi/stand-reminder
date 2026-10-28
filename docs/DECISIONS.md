@@ -168,7 +168,7 @@ else { next = .center }
 
 **背景**：`SMAppService.mainApp`（macOS 13+）是官方推荐方案。
 
-**决策**：手写 `~/Library/LaunchAgents/cn.yuou.xiehuier.plist`。
+**决策**：手写 `~/Library/LaunchAgents/io.github.xinyuanzi.xiehuier.plist`。
 
 **理由**：`SMAppService` 在**未签名的本地自建 App** 上注册经常静默失败（需要有效的 bundle 标识与签名状态）。LaunchAgent 不依赖证书，本地跑稳定。
 

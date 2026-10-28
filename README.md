@@ -216,7 +216,7 @@ open 歇会儿.app
 | 判断你真走了 | `CGDisplayIsAsleep`（显示器是否休眠）+ `CGSessionCopyCurrentDictionary`（锁屏/是否在控制台） | 不需要 |
 | 判断是否在开会 | `AVCaptureDevice.isInUseByAnotherApplication` + CoreAudio `kAudioDevicePropertyDeviceIsRunningSomewhere`（只查设备是否被占用，不取内容） | 不需要 |
 | 鼠标位置 | `NSEvent.mouseLocation`（仅坐标） | 不需要 |
-| 开机自启 | 写 `~/Library/LaunchAgents/cn.yuou.xiehuier.plist` | 不需要 |
+| 开机自启 | 写 `~/Library/LaunchAgents/io.github.xinyuanzi.xiehuier.plist` | 不需要 |
 
 数据全部留在本地——设置和打卡记录在 `UserDefaults`，计时快照在 `~/Library/Application Support/XieHuiEr/session.json`。没有账号，没有网络请求，不上传任何东西。
 

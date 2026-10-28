@@ -29,7 +29,7 @@ if let dict = NSDictionary(contentsOfFile: path) {
 
 let printTask = Process()
 printTask.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-printTask.arguments = ["print", "gui/\(getuid())/cn.yuou.xiehuier"]
+printTask.arguments = ["print", "gui/\(getuid())/io.github.xinyuanzi.xiehuier"]
 let pipe = Pipe()
 printTask.standardOutput = pipe
 printTask.standardError = pipe

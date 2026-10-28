@@ -4,7 +4,7 @@ import Foundation
 /// 不依赖开发者证书，本地自建 App 也能稳定生效。
 enum LaunchAtLogin {
 
-    private static let label = "cn.yuou.xiehuier"
+    private static let label = "io.github.xinyuanzi.xiehuier"
 
     static var agentURL: URL {
         let dir = ("~/Library/LaunchAgents" as NSString).expandingTildeInPath

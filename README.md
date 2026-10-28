@@ -85,7 +85,7 @@
 
 ### 方式一：下载 dmg（只想用，不想编译）
 
-1. 到 **Releases** 页面下载最新的 `歇会儿-<版本>.dmg`
+1. 到 [**Releases**](https://github.com/xinyuanzi/stand-reminder/releases) 页面下载最新的 `歇会儿-<版本>.dmg`
 2. 双击打开，把「歇会儿」拖进「应用程序」
 3. **首次打开需要右键 → 打开**——这个 app 没有 Apple 开发者签名，双击会被 Gatekeeper 拦下
 4. 首次运行会弹出三屏引导，菜单栏出现 `🚶 0m`
@@ -102,7 +102,7 @@
 xcode-select --install
 
 # 2. 编译
-git clone <本仓库地址> && cd <仓库目录>
+git clone https://github.com/xinyuanzi/stand-reminder.git && cd stand-reminder
 ./build.sh
 
 # 3. 跑起来
@@ -283,3 +283,5 @@ A：短期内不会。这个项目的核心是一堆 macOS 专有行为（NSPane
 [MIT](LICENSE)
 
 素材（`Resources/mascots/`，按形象分目录）同源同一许可，可自由使用与再生成。
+
+用出问题、或者觉得哪条判定不对，直接提 [Issue](https://github.com/xinyuanzi/stand-reminder/issues)——**尤其是「数字不对」这一类**，这个项目最怕的就是计数不可信。

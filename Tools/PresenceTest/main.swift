@@ -21,6 +21,10 @@ func near(_ a: Double, _ b: Double, _ tol: Double = 0.01) -> Bool {
 let T = PresenceThresholds(focusMinutes: 60, strongMinutes: 90,
                            silentMinutes: 5, longSilentMinutes: 30)
 
+/// 「离开够久」的循环次数。从阈值派生而不是写死 —— 否则每次调 `awayMin`
+/// 都得回来改三处，忘一处就是一条假绿（循环跑完没结算，断言却按「会结算」写）。
+let awayEnough = Int(T.awayMin) + 10
+
 /// 一次正常的心跳
 func beat(_ now: Double, idle: Double = 0.4, away: Bool = false,
           meeting: Bool = false, delta: Double = 1,
@@ -61,7 +65,27 @@ do {
     check(near(m.focusSeconds, 610), "锁屏 5 秒后应继续累计到 610 秒，实际 \(m.focusSeconds)")
 }
 
-// MARK: - 3. 锁屏 40 秒：清零并记一次打卡，回来重新从头算
+// MARK: - 2b. 锁屏 30 秒：旧阈值的边界，现在不该再结算
+//
+// v0.12.10 把 awayMin 从 30 提到 60 秒。这条钉住改动本身：
+// 真机上发生的是「显示器休眠 67 秒，28 分钟的连续专注被抹掉」。
+
+do {
+    var m = PresenceMachine()
+    var now = 0.0
+    for _ in 1...600 { now += 1; _ = m.step(now: now, input: beat(now), thresholds: T) }
+    var settled = false
+    for _ in 1...30 {
+        now += 1
+        let e = m.step(now: now, input: beat(now, away: true), thresholds: T)
+        if e.settledAway { settled = true }
+    }
+    for _ in 1...10 { now += 1; _ = m.step(now: now, input: beat(now), thresholds: T) }
+    check(!settled, "锁屏 30 秒不该结算（阈值已提到 60 秒）")
+    check(near(m.focusSeconds, 610), "锁屏 30 秒后应继续累计到 610 秒，实际 \(m.focusSeconds)")
+}
+
+// MARK: - 3. 锁屏够久（阈值 + 10 秒）：清零并记一次打卡，回来重新从头算
 
 do {
     var m = PresenceMachine()
@@ -69,7 +93,7 @@ do {
     for _ in 1...3700 { now += 1; _ = m.step(now: now, input: beat(now), thresholds: T) }
     var settledCount = 0
     var habit = false
-    for _ in 1...40 {
+    for _ in 1...awayEnough {
         now += 1
         let e = m.step(now: now, input: beat(now, away: true), thresholds: T)
         if e.settledAway { settledCount += 1; habit = habit || e.shouldRecordHabit }
@@ -435,7 +459,7 @@ do {
     var t = 0.0
     for _ in 1...3700 { t += 1; _ = n.step(now: t, input: beat(t), thresholds: T) }
     n.noteSnooze()
-    for _ in 1...40 {
+    for _ in 1...awayEnough {
         t += 1
         _ = n.step(now: t, input: beat(t, away: true), thresholds: T)
     }
@@ -505,7 +529,7 @@ do {
     for _ in 1...3700 { now += 1; _ = m.step(now: now, input: beat(now), thresholds: T) }
     check(m.claimRest(now: now, thresholds: T), "\(restBtn)前置：窗口应打开")
     var confirmed = false, habit = false
-    for _ in 1...40 {
+    for _ in 1...awayEnough {
         now += 1
         let e = m.step(now: now, input: beat(now, away: true), thresholds: T)
         if e.restConfirmed { confirmed = true }

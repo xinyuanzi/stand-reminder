@@ -36,7 +36,7 @@ struct PresenceThresholds: Equatable {
     var restQuiet: Double
 
     init(focusMinutes: Int, strongMinutes: Int, silentMinutes: Int,
-         longSilentMinutes: Int, awayMin: Double = 30,
+         longSilentMinutes: Int, awayMin: Double = 60,
          restWindow: Double = 300, restQuiet: Double = 60) {
         soft = Double(focusMinutes * 60)
         strong = Double(max(strongMinutes, focusMinutes) * 60)
@@ -295,7 +295,7 @@ struct PresenceMachine: Equatable {
             event.settledAway = true
             event.shouldRecordHabit = settle(t)
         } else {
-            // 唤醒通知常常比「睡够 30 秒」到得晚，这里补一次结算
+            // 唤醒通知常常比「睡够 60 秒」到得晚，这里补一次结算
             if let since = awaySince, !awaySettled, now - since >= t.awayMin {
                 awaySettled = true
                 event.settledAway = true

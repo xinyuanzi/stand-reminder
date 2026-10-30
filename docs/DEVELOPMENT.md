@@ -107,7 +107,7 @@ open 歇会儿.app
 ├── PresenceMachine.step(now:input:thresholds:)  ← 纯函数，不读时钟不碰 UI
 │   │
 │   ├── 结算离开（awaySince 由熄屏/系统睡眠通知在事发瞬间写入）
-│   │     ├── 持续 ≥ 30s → 清零；坐够软阈值的话顺手记一次打卡
+│   │     ├── 持续 ≥ 60s → 清零；坐够软阈值的话顺手记一次打卡
 │   │     └── < 30s     → 当作没走成，什么都不动
 │   │
 │   ├── 累计 focusSeconds += min(delta, 3)

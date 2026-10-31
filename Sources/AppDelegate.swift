@@ -214,6 +214,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                            longSilentMinutes: prefs.longSilentMinutes)
     }
 
+    /// 提醒被推迟时已经欠了多久（分钟）。
+    ///
+    /// 从「到达软提醒线」算起，不是从推迟那一刻算起——两者其实是同一个点：
+    /// `deferredPending` 只在 `focusSeconds >= soft` 之后才可能被置上，而一旦真弹过
+    /// 一次，`reminderFired` 就锁住本轮、不会再置。所以「当前 focus − soft」
+    /// 就是这轮一直没弹的时长，不需要额外记一个时间戳。
+    private var deferredMinutes: Int {
+        max(0, Int((machine.focusSeconds - thresholds.soft) / 60))
+    }
+
     @objc private func tick() {
         resetDayIfNeeded()
 
@@ -863,6 +873,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func updateStatus() {
         let minutes = Int(machine.focusSeconds / 60)
 
+        // 提醒被压住的时候，状态栏必须带标记。
+        //
+        // 2026-10-31 用户问「为什么今天没有弹窗，已经 62 分钟了」——真相是一场
+        // 64 分钟的飞书会议一直占着麦克风，`meetingBusy` 全为真，提醒全走了
+        // 「会后补发」。菜单里那行小字写的是「会议中照常计时」，读起来像一切正常，
+        // 用户根本分不清是「app 在等」还是「app 挂了」。
+        //
+        // 推迟本身可以接受，**无声地推迟不行**。
+        let deferTag = machine.deferredPending ? (meetingBusy ? " · 开会" : " · 手停") : ""
+
         let normalTitle: String
         if isPaused() {
             normalTitle = " 暂停"
@@ -871,7 +891,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else if todayCount >= prefs.dailyCap {
             normalTitle = " \(minutes)m 已满"
         } else {
-            normalTitle = " \(minutes)m"
+            normalTitle = " \(minutes)m\(deferTag)"
         }
         let title = Date() < statusFlashUntil ? (statusFlash ?? normalTitle) : normalTitle
         // 每秒无脑赋值会让状态栏重排重绘，只在文案真的变了才写
@@ -881,13 +901,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         // 数字还在涨的时候，必须说清楚为什么——不然用户只会以为计时坏了。
+        // 会议优先于长静默：开会时麦克风在采集，人肯定在，此时说「手停 60 分钟」
+        // 既不准确，又正好把最该解释的那一句挤掉了。
         let awayNote: String
-        if machine.inLongSilence {
+        if meetingBusy {
+            if !machine.deferredPending {
+                awayNote = " · 会议中照常计时"
+            } else if deferredMinutes >= 1 {
+                awayNote = " · 会议中，提醒已推迟 \(deferredMinutes) 分钟"
+            } else {
+                // 刚到点就被压住，「已推迟 0 分钟」读起来像 bug
+                awayNote = " · 会议中，提醒刚到点"
+            }
+        } else if machine.inLongSilence {
             awayNote = " · 手停 \(Int(lastIdle / 60)) 分钟，先不弹"
         } else if machine.inSilence {
             awayNote = " · 静默中（提醒不升级）"
-        } else if meetingBusy {
-            awayNote = " · 会议中照常计时"
         } else {
             awayNote = ""
         }

@@ -17,6 +17,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var tickTimer: Timer?
     private var escalateTimer: Timer?
     private var wanderTimer: Timer?
+    /// 强提醒沿屏幕右缘上下巡逻用的定时器
+    private var patrolTimer: Timer?
+    private var patrolRect: NSRect = .zero
+    /// 当前位置、方向、停顿截止时间。步进规则在 `Patrol.step`（纯函数，有测试）
+    private var patrolState = PatrolState(y: 0, direction: -1, pausedUntil: nil)
+    /// 强提醒期间补响了几次、上一次是什么时候
+    private var strongChimeCount = 0
+    private var lastStrongChimeAt: Date?
     /// 终极提醒贴光标用的定时器
     private var chaseTimer: Timer?
     /// 强提醒响了之后，倒计时到终极提醒
@@ -140,6 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         tickTimer?.invalidate()
         escalateTimer?.invalidate()
         wanderTimer?.invalidate()
+        patrolTimer?.invalidate()
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         // 退出前落一次盘：下次启动能接着显示，而不是眼睁睁看着归零
         persist()
@@ -289,6 +298,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
            prefs.wanderEnabled, wanderTimer == nil, chaseTimer == nil,
            Date().timeIntervalSince(lastManualMoveAt) > 1.5 {
             startWandering()
+        }
+
+        // 巡逻的自愈。同一套理由：被拖走、连戳躲闪、升级到终极提醒都会停掉它，
+        // 少恢复一条就是「强提醒又变成一张静止的贴图」。
+        if panelVisible, model.urgency == .strong, patrolTimer == nil,
+           Date().timeIntervalSince(lastManualMoveAt) > 1.5 {
+            startPatrolling()
+        }
+
+        // 巡逻的自愈。同一套理由：被拖走、连戳躲闪、升级到终极提醒都会停掉它，
+        // 少恢复一条就是「强提醒又变成一张静止的贴图」。
+        if panelVisible, model.urgency == .strong, patrolTimer == nil,
+           Date().timeIntervalSince(lastManualMoveAt) > 1.5 {
+            startPatrolling()
         }
 
         // 追光标的自愈。同一套理由：被拖走、连戳躲闪、进静默都会停掉它，
@@ -448,15 +471,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.minutes = Int(machine.focusSeconds / 60)
         panel?.level = .screenSaver
         NSSound(named: NSSound.Name("Glass"))?.play()
-        // 强提醒**不追光标**，改成定住。
+        // 强提醒的三件事：**换成竖向巡逻** + 提到屏保层级 + 变橙 + 出声。
         //
-        // 原来这里直接 startChasing，结果「强提醒」和「终极提醒」是同一件事，
-        // 三档升级实际上只有两档。现在分工明确：
-        //   软提醒   沿屏幕下缘来回游走（12 秒无响应起）
-        //   强提醒   停住 + 提到屏保层级 + 提示音 + 变橙
-        //   终极提醒 缓慢跟着光标，躲不掉
-        // 每一档只加一个新行为，用户才分得清「它又升级了」。
+        // 原来这里是「停住不动」，理由是「不动才显得在等」。运行两天后否掉了：
+        // 一张定格的卡片和一张贴图没区别，用户扫一眼就归档成「已读」，然后继续干。
+        // 现在三档的差别落在**运动方式**上，比落在「动/不动」上更容易分辨：
+        //   软提醒   贴下缘横向蹭（60px/s），在旁边晃
+        //   强提醒   贴右缘纵向巡（102px/s），两端停 0.5 秒，主动找你
+        //   终极提醒 跟着光标走（72px/s），躲不掉
+        // 三档都是匀速可预测的——见 D-32，加速不等于抽搐。
         stopWandering()
+        startPatrolling()
         stopUltimateCountdown()
         guard prefs.ultimateEnabled else { return }
         let t = Timer(timeInterval: TimeInterval(max(1, prefs.ultimateMinutes) * 60),
@@ -478,6 +503,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.urgency = .ultimate
         model.minutes = Int(machine.focusSeconds / 60)
         NSSound(named: NSSound.Name("Glass"))?.play()
+        stopPatrolling()
         startChasing()
         updateStatus()
     }
@@ -522,6 +548,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func hideReminder() {
         stopEscalation()
         stopWandering()
+        stopPatrolling()
         stopChasing()
         stopUltimateCountdown()
         stopGazeTracking()
@@ -621,6 +648,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func startWandering() {
         guard prefs.wanderEnabled, wanderTimer == nil, let p = panel else { return }
+        stopPatrolling()
         wanderDirection = -1
 
         let screen = activeScreen ?? preferredScreen()
@@ -651,6 +679,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let target = NSPoint(x: x, y: wanderRect.minY + panelMargin)
         autoMovedTo = target
         p.setFrameOrigin(target)
+    }
+
+    // MARK: - 巡逻（强提醒：贴着屏幕右缘上下走）
+
+    /// 强提醒的运动轨迹：**贴着屏幕右缘上下往复**。
+    ///
+    /// 为什么是竖向而不是加快版的下缘横移：
+    /// - 软提醒已经在横向蹭了，同一方向加速只是「更快的同一件事」，用户分不出来。
+    ///   竖直方向是这一档独有的，扫一眼就知道升级了。
+    /// - 右缘通常没有正在读的内容（正文居中、侧栏在左），纵向扫过整屏高度，
+    ///   存在感比贴底强得多，又不会压在视线上。
+    /// - 到位后停 0.5 秒再折返。匀速往返像扫地机器人，停一下才像「站在那儿等你」。
+    private func startPatrolling() {
+        guard patrolTimer == nil, let p = panel else { return }
+        stopWandering()
+        stopChasing()
+
+        let screen = activeScreen ?? preferredScreen()
+        patrolRect = screen?.visibleFrame ?? p.frame
+        patrolState = PatrolState(y: p.frame.origin.y, direction: -1, pausedUntil: nil)
+        strongChimeCount = 0
+        lastStrongChimeAt = Date()
+
+        let t = Timer(timeInterval: 1.0 / 30.0, target: self, selector: #selector(patrolStep),
+                      userInfo: nil, repeats: true)
+        RunLoop.main.add(t, forMode: .common)
+        patrolTimer = t
+    }
+
+    private func stopPatrolling() {
+        patrolTimer?.invalidate()
+        patrolTimer = nil
+        patrolState.pausedUntil = nil
+    }
+
+    @objc private func patrolStep() {
+        guard let p = panel, p.isVisible, patrolRect.height > 0 else { return }
+
+        let now = Date()
+        let margin = panelMargin
+
+        // 横坐标每帧往右缘贴，最多 14px（≈420px/s）。卡片多半是软提醒阶段
+        // 从屏幕中间游过来的，一帧挪一点滑过去就行——不用另起一段动画，
+        // 动画期间坐标一路在变，还得额外证明「这不是用户在拖」。
+        let targetX = patrolRect.maxX - p.frame.width - margin
+        let dx = targetX - p.frame.origin.x
+        let xStep = max(-14, min(14, dx))
+
+        // 纵向：规则全在 `Patrol.step`（到端停 0.5 秒再折返）。
+        // 每帧先把 y 同步成真实窗口坐标 —— 用户可能刚把它拖到别处，
+        // 状态里存的是上一帧的推算值，不能当准。
+        patrolState.y = p.frame.origin.y
+        patrolState = Patrol.step(patrolState,
+                                  now: now.timeIntervalSince1970,
+                                  lower: patrolRect.minY + margin,
+                                  upper: patrolRect.maxY - p.frame.height - margin)
+
+        let next = NSPoint(x: p.frame.origin.x + xStep, y: patrolState.y)
+        autoMovedTo = next
+        p.setFrameOrigin(next)
+
+        // 每 45 秒补响一次，最多 3 次。
+        //
+        // 一次提醒音在耳机里、在键盘声里、在会议尾音里非常容易被吞掉，而这一档的
+        // 全部价值就是「你还没处理」这件事。补响有上限：它不是闹钟，是个不走的宠物。
+        if strongChimeCount < 3,
+           let last = lastStrongChimeAt,
+           now.timeIntervalSince(last) >= 45 {
+            NSSound(named: NSSound.Name("Tink"))?.play()
+            lastStrongChimeAt = now
+            strongChimeCount += 1
+        }
     }
 
     // MARK: - 鼠标互动
@@ -685,6 +785,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func dodge() {
         guard let p = panel, p.isVisible else { return }
         stopWandering()
+        stopPatrolling()
         stopChasing()
 
         let rect = (p.screen ?? activeScreen)?.visibleFrame ?? p.frame
@@ -722,6 +823,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func startChasing() {
         guard prefs.ultimateEnabled, chaseTimer == nil, panel != nil else { return }
         stopWandering()
+        stopPatrolling()
         let t = Timer(timeInterval: 1.0 / 30.0, target: self, selector: #selector(chaseStep),
                       userInfo: nil, repeats: true)
         RunLoop.main.add(t, forMode: .common)
@@ -857,6 +959,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // 地方 —— 是你主动挪的，尊重这个选择；否则「拖一下就变成
                 // 会追人」等于提前把最后一档放出来，三档又糊成一档。
                 self.startChasing()
+            } else if self.model.urgency == .strong {
+                // 强提醒被拖走也要接着巡逻：停在你放的地方就只是一张静止卡片了
+                self.startPatrolling()
+            } else if self.model.urgency == .strong {
+                // 强提醒被拖走也要接着巡逻：停在你放的地方就只是一张静止卡片了
+                self.startPatrolling()
             } else if self.model.urgency == .soft,
                       self.model.stage == .stretching {
                 // 软提醒阶段被拖走也要接着游走，否则碰一下卡片就永久定住。

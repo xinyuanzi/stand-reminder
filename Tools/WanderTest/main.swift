@@ -103,6 +103,69 @@ for i in 1..<samples.count {
 }
 check(badSteps == 0, "单帧位移不该超过 2px（说明用了真实步长），异常 \(badSteps) 帧")
 
+// MARK: - 强提醒的纵向巡逻
+
+// 1) 纯规则：60 秒里应该来回跑几趟，到端停一下，全程不越界
+print("")
+let pLow: CGFloat = 4
+let pHigh: CGFloat = 900 - size.height - 4
+var ps = PatrolState(y: pLow, direction: 1, pausedUntil: nil)
+var pnow = 0.0
+var flips = 0
+var pausedFrames = 0
+var pOutOfRange = 0
+var maxStep: CGFloat = 0
+var lastY = ps.y
+var lastDir = ps.direction
+
+for _ in 0..<1800 {                     // 60 秒 @30fps
+    pnow += 1.0 / 30.0
+    ps = Patrol.step(ps, now: pnow, lower: pLow, upper: pHigh)
+    if ps.y < pLow - 0.01 || ps.y > pHigh + 0.01 { pOutOfRange += 1 }
+    if ps.pausedUntil != nil { pausedFrames += 1 }
+    if ps.direction != lastDir { flips += 1; lastDir = ps.direction }
+    maxStep = max(maxStep, abs(ps.y - lastY))
+    lastY = ps.y
+}
+check(pOutOfRange == 0, "巡逻全程不该越界，越界 \(pOutOfRange) 帧")
+check(flips >= 4, "60 秒该来回至少两趟（翻转 ≥4 次），实际 \(flips) 次")
+check(pausedFrames > 0, "到端应该有停顿帧，实际 \(pausedFrames) 帧")
+check(maxStep <= Wander.patrolSpeed + 0.01, "单帧位移不该超过 patrolSpeed=\(Wander.patrolSpeed)，实际 \(maxStep)")
+
+// 2) 停顿会自己结束：停完之后要接着走
+var hold = PatrolState(y: pLow, direction: -1, pausedUntil: nil)
+hold = Patrol.step(hold, now: 1.0, lower: pLow, upper: pHigh)   // 撞底 → 翻转 + 安排停顿
+let yAtBounce = hold.y
+let resumeAt = hold.pausedUntil ?? 0
+let during = Patrol.step(hold, now: resumeAt - 0.1, lower: pLow, upper: pHigh)
+check(abs(during.y - yAtBounce) < 0.01, "停顿期间不该移动，\(yAtBounce) → \(during.y)")
+let after = Patrol.step(hold, now: resumeAt + 0.01, lower: pLow, upper: pHigh)
+check(after.y > yAtBounce, "停顿结束后应继续向上，\(yAtBounce) → \(after.y)")
+
+// 3) 真窗口：纵向 setFrameOrigin 也得生效（这张面板坑过位移）
+print("")
+panel.setFrameOrigin(NSPoint(x: maxX, y: pLow))
+var i = 0
+var travel: CGFloat = 0
+var lastPos = panel.frame.origin.y
+let t2 = Timer(timeInterval: 1.0 / 30.0, repeats: true) { _ in
+    guard panel.isVisible else { return }
+    ps.y = panel.frame.origin.y
+    ps = Patrol.step(ps, now: Date().timeIntervalSince1970,
+                     lower: pLow, upper: pHigh)
+    panel.setFrameOrigin(NSPoint(x: maxX, y: ps.y))
+    travel += abs(panel.frame.origin.y - lastPos)
+    lastPos = panel.frame.origin.y
+    i += 1
+}
+RunLoop.main.add(t2, forMode: .common)
+RunLoop.main.run(until: Date().addingTimeInterval(2.0))
+t2.invalidate()
+
+check(i >= 50, "2 秒内至少采到 50 帧，实际 \(i)")
+check(travel > 100, "2 秒该在纵向移动 100px 以上，实际 \(Int(travel))px")
+check(abs(panel.frame.origin.x - maxX) < 1, "巡逻时横坐标应钉在右缘 \(maxX)，实际 \(panel.frame.origin.x)")
+
 panel.orderOut(nil)
 
 print("")

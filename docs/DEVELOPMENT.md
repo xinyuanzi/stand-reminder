@@ -491,6 +491,40 @@ lipo -create -output 歇会儿 build/arm64 build/x86_64
 
 **没做**，也没打算做：手上没有 Intel 机器，发一个自己没跑过的二进制，比老实标注「只支持 Apple Silicon」更不负责。README、dmg 说明里都写明了。
 
+### 两条工作流：守门与发版
+
+| 工作流 | 触发 | 干什么 |
+|---|---|---|
+| `ci.yml` | push 到 `main`、任何 PR、手动 | `run_tests.sh`（104 项）+ `build.sh` + bundle 结构。**不打包、不发版** |
+| `release.yml` | 打 `v*` tag、手动 | 编译 → 打 dmg → 冒烟 → 建 **draft** Release |
+
+分工的理由：守门是高频动作，发版是低频动作。混在一条里，每次推送都要排队打 dmg，而绝大多数推送没人下载。
+
+**这两个测试进不了 CI**：`run_anim_test.sh` 和 `run_wander_test.sh` 要真实 `NSWindow`（`setFrameOrigin` 真的生效、`CGWindowListCreateImage` 抓帧），依赖稳定的 WindowServer，macos runner 上会随机红。**所以动过动作编排或窗口移动之后，本地必须补跑**——CI 绿了不代表这两块没问题。
+
+发版流程：
+
+```bash
+# 1. 先改版本号。CI 打出来的 dmg 名字取的是 Info.plist，不是 tag
+#    Resources/Info.plist: CFBundleShortVersionString / CFBundleVersion
+# 2. 提交
+git add -A && git commit -m "release: vX.Y.Z"
+
+# 3. 打 tag 并推（tag 才是 release.yml 的触发器）
+git tag vX.Y.Z && git push origin main --tags
+
+# 4. 等 CI 跑完，检查 draft Release 里的 dmg
+gh run watch
+gh release view vX.Y.Z
+
+# 5. 确认能下载、能挂载、能拖走，再发布成正式版
+gh release edit vX.Y.Z --draft=false
+```
+
+**版本号必须和 tag 一致。** `package.sh` 取的是 `CFBundleShortVersionString`——tag 打 `v1.0.0` 而 Info.plist 还写着 `0.12.12`，产出就叫 `歇会儿-0.12.12.dmg`，下载的人会以为拿错了。
+
+**为什么 Release 先建草稿**：未签名分发的包一旦发出去就是公开可下载的，拦不回来。草稿态留一个「自己先下载试一次」的窗口。
+
 ## 9. 工程约束（容易踩）
 
 - **`nonactivatingPanel` 上的系统控件会降级**：所有按钮自绘，别用 `.borderedProminent`

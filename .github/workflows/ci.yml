@@ -1,0 +1,61 @@
+name: ci
+
+# main 的守门人。和 release.yml 分工：
+#   ci.yml      push 到 main、任何 PR  → 只验证（用例 + 编译 + bundle 结构）
+#   release.yml 打 v* tag              → 编译 + 打 dmg + 冒烟 + 建 draft Release
+#
+# 为什么分两条：守门是高频动作，发版是低频动作。混在一条里，每次推送都要排队
+# 打 dmg，而绝大多数推送没人下载。
+#
+# 为什么这里不跑 run_anim_test.sh / run_wander_test.sh：
+# 那两个要真实 NSWindow（setFrameOrigin 真的生效、CGWindowListCreateImage 抓帧），
+# 依赖稳定的 WindowServer。macos runner 上跑会随机红，红了也说明不了问题。
+# 所以动过动作编排或窗口移动之后，本地必须补跑这两个——CI 绿不等于这两块没问题。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 同一个分支连续推送时，取消上一次还没跑完的，省 runner 排队时间
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# 只读就够：这条工作流不写任何东西
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    # 和 release.yml 同一个 runner：macos-14 起是 Apple Silicon，
+    # 和 build.sh 里写死的 arm64 目标一致
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 环境检查
+        run: |
+          sw_vers
+          xcrun --find swiftc
+          swiftc --version
+
+      - name: 判定逻辑用例
+        # 纯 Swift、不碰 AppKit，CI 里能全跑。改判定逻辑没跑这条就别推。
+        run: ./Tools/run_tests.sh
+
+      - name: 编译
+        run: ./build.sh
+
+      - name: bundle 结构
+        # build.sh 成功不等于产物可用：曾经出现过「编译过了但图标没拷进去」。
+        # GUI 应用没法在 CI 里真跑，能验的就是这些静态件。
+        run: |
+          APP="歇会儿.app"
+          test -x "$APP/Contents/MacOS/XieHuiEr"
+          test -f "$APP/Contents/Resources/AppIcon.icns"
+          test -d "$APP/Contents/Resources/mascots/a"
+          test -f "$APP/Contents/Resources/mascots/a/sit.png"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Contents/Info.plist"

@@ -29,9 +29,10 @@ permissions:
 
 jobs:
   verify:
-    # 和 release.yml 同一个 runner：macos-14 起是 Apple Silicon，
-    # 和 build.sh 里写死的 arm64 目标一致
-    runs-on: macos-14
+    # macos-14 的镜像在 2026-11-02 退役（当天是 brownout 期，job 起来 1 秒就被判失败），
+    # 所以钉 15。不用 macos-latest：它会静默跟着最新镜像漂，坏的时候没有明确报错。
+    # macos-14 起 runner 就是 Apple Silicon，和 build.sh 写死的 arm64 目标一致。
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 

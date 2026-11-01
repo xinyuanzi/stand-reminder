@@ -15,8 +15,9 @@ permissions:
 
 jobs:
   build:
-    # macos-14 起 runner 是 Apple Silicon，和 build.sh 里的 arm64 目标一致
-    runs-on: macos-14
+    # macos-14 起 runner 是 Apple Silicon，和 build.sh 里的 arm64 目标一致。
+    # 钉 15 而不是 14：14 的镜像 2026-11-02 退役（当天 brownout 直接跑挂）。
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 

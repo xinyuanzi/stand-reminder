@@ -164,6 +164,30 @@ do {
     check(e.shouldShowReminder && e.reminderIsDeferred, "会后应补发")
 }
 
+// MARK: - 5b. 会议压满 deferCap：照弹一次，不能整天哑掉
+//
+// 10-31 的真实故障：64 分钟的会，deferredPending 从头欠到尾，todayCount 一整天 0。
+// 「不打扰」不等于「一整天不提醒」——兜底就是「最多欠 30 分钟」。
+
+do {
+    var m = PresenceMachine()
+    var now = 0.0
+    var shows = 0
+    var firstShowAt = 0.0
+    for _ in 1...7200 {                       // 两小时会议
+        now += 1
+        let e = m.step(now: now, input: beat(now, meeting: true), thresholds: T)
+        if e.shouldShowReminder {
+            shows += 1
+            if firstShowAt == 0 { firstShowAt = now }
+        }
+    }
+    check(shows == 1, "会中压满上限只该弹一次，实际 \(shows) 次")
+    check(near(firstShowAt, 5400), "该在 60 分钟 + 30 分钟（5400 秒）弹，实际 \(firstShowAt)")
+    check(near(m.focusSeconds, 7200), "会中记账不该停，实际 \(m.focusSeconds)")
+    check(!m.deferredPending, "弹过之后不该继续欠着")
+}
+
 // MARK: - 6. 合盖 8 小时：清零、记打卡，且不把 8 小时算进今天
 
 do {
@@ -612,6 +636,79 @@ do {
     _ = m.claimRest(now: now, thresholds: T)
     m.adopt(focusSeconds: 3700, daySitSeconds: 3700)
     check(m.awaitingRestSince == nil, "\(restBtn)续盘后观察窗口应清空")
+}
+
+// MARK: - 20. 本周回顾的数据层
+
+do {
+    // 固定时区，否则跑测试的机器换个时区结果就飘
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = TimeZone(secondsFromGMT: 0)!
+    cal.firstWeekday = 2
+    let fmt = DateFormatter()
+    fmt.dateFormat = "yyyy-MM-dd"
+    fmt.timeZone = cal.timeZone
+    func d(_ s: String) -> Date { fmt.date(from: s)! }
+    func rec(_ day: String, sit: Double = 0, breaks: Int = 0,
+             reminders: Int = 0, longest: Double = 0) -> DayRecord {
+        DayRecord(dayKey: day, sitSeconds: sit, breaks: breaks,
+                  reminders: reminders, longestStretch: longest)
+    }
+
+    // 20.1 upsert：同一天覆盖、按日期升序
+    var list = [rec("2026-10-27", sit: 100), rec("2026-10-26", sit: 200)]
+    list = History.upsert(rec("2026-10-27", sit: 999), into: list)
+    check(list.count == 2, "同一天应覆盖而不是追加，实际 \(list.count) 条")
+    check(list.map(\.dayKey) == ["2026-10-26", "2026-10-27"], "应按日期升序")
+    check(list.last?.sitSeconds == 999, "覆盖后应取新值")
+
+    // 20.2 upsert：超过上限裁掉最老的
+    var many: [DayRecord] = []
+    for i in 1...20 {
+        many = History.upsert(rec(String(format: "2026-10-%02d", i)), into: many)
+    }
+    check(many.count == History.keepDays, "只该保留 \(History.keepDays) 天，实际 \(many.count)")
+    check(many.first?.dayKey == "2026-10-07", "应裁掉最老的，实际留下 \(many.first?.dayKey ?? "?")")
+
+    // 20.3 startOfWeek：2026-11-01 是周日，本周一应是 10-26（跨月）
+    check(History.dayKey(History.startOfWeek(d("2026-11-01"), cal), cal) == "2026-10-26",
+          "周日所在的周应从 10-26 起算")
+    check(History.dayKey(History.startOfWeek(d("2026-11-02"), cal), cal) == "2026-11-02",
+          "周一是它自己那周的第一天")
+
+    // 20.4 week：缺数据的那天是 nil，**不是 0**
+    let sparse = [rec("2026-10-28", sit: 3600), rec("2026-11-01", sit: 1800)]
+    // 槽位对齐：用「整周都有数据」的样本验周一到周日的顺序
+    let monday = History.startOfWeek(d("2026-11-01"), cal)
+    let full = (0..<7).map { i -> DayRecord in
+        let day = cal.date(byAdding: .day, value: i, to: monday)!
+        return rec(History.dayKey(day, cal), sit: Double(3600 * (i + 1)))
+    }
+    let wf = History.week(full, containing: d("2026-11-01"), calendar: cal)
+    check(wf.count == 7, "一周应有 7 个槽，实际 \(wf.count)")
+    check(wf[0]?.dayKey == "2026-10-26", "第一槽应是周一 10-26，实际 \(wf[0]?.dayKey ?? "nil")")
+    check(wf[6]?.dayKey == "2026-11-01", "最后一槽应是周日 11-01，实际 \(wf[6]?.dayKey ?? "nil")")
+    check(wf.compactMap { $0 }.count == 7, "整周有数据时不该有空洞")
+
+    // 缺数据的那天必须是 nil，不是 0
+    let w = History.week(sparse, containing: d("2026-11-01"), calendar: cal)
+    check(w[2]?.dayKey == "2026-10-28", "周三应该有数据")
+    check(w[6]?.dayKey == "2026-11-01", "周日应该有数据")
+    check(w[0] == nil && w[1] == nil && w[3] == nil,
+          "没数据的那天应是 nil（不是 0）——0 会把「没开机」画成「坐了 0 分钟」")
+
+    // 20.5 summary：日均除以「有数据的天数」，不是 7
+    let s2 = History.summary(sparse, containing: d("2026-11-01"), calendar: cal)
+    check(s2.daysWithData == 2, "有数据的天数应是 2，实际 \(s2.daysWithData)")
+    check(near(s2.totalSit, 5400), "总坐应是 5400 秒，实际 \(s2.totalSit)")
+    check(near(s2.dailyAverage, 2700), "日均应是 2700 秒（除 2 不是除 7），实际 \(s2.dailyAverage)")
+
+    // 20.6 lastWeekTotal：上周（10-19 ~ 10-25）能取到
+    let withLast = sparse + [rec("2026-10-21", sit: 7200)]
+    check(near(History.lastWeekTotal(withLast, containing: d("2026-11-01"), calendar: cal) ?? 0, 7200),
+          "上周总坐应是 7200 秒")
+    check(History.lastWeekTotal(sparse, containing: d("2026-11-01"), calendar: cal) == nil,
+          "没有上周数据时该返回 nil，不能返回 0（0 会被算成「比上周多坐」）")
 }
 
 // MARK: - 汇总

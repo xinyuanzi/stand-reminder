@@ -80,6 +80,10 @@ final class ReminderModel: ObservableObject {
     @Published var gaze: GazeDirection = .center
     /// 这一轮已经推掉了几次「再等 N 分钟」，由 AppDelegate 从判定机同步过来
     @Published var snoozeStreak: Int = 0
+    /// 今天第几次提醒，**从 0 开始**。用来轮换文案，见 `Copy`
+    @Published var copyVariant: Int = 0
+    /// 会开太久兜底放的这一次（会议还在进行中）
+    @Published var duringMeeting: Bool = false
 
     /// 「再等一会儿」最多给几次。
     ///
@@ -181,6 +185,8 @@ struct MascotCard: View {
         if let line = model.pokedLine { return line }
         if model.returnedSoon { return "你好像没走开" }
         if model.urgency == .ultimate { return "我就跟着你了" }
+        // 会中兜底和会后补发是两件事：前者会议还在开，写「刚才在开会吧」就是错的
+        if model.duringMeeting { return "这会开挺久了吧" }
         if model.deferred { return "刚才在开会吧？" }
         if model.urgency == .strong { return "已经 \(model.minutes) 分钟了" }
         if model.stage == .sitting {
@@ -189,23 +195,26 @@ struct MascotCard: View {
                 ? "又到 \(model.minutes) 分钟啦"
                 : "你已经坐了 \(model.minutes) 分钟"
         }
-        return "喂——还在坐？"
+        // 这一条是真的在问话，所以会免疫——轮换。
+        // 其余几条标题带数字或在陈述状态，不轮换（数字本身每次都不一样）。
+        return Copy.pick(Copy.stretchingTitle, model.copyVariant)
     }
 
     private var subtitle: String {
         // 别写「你没动」那种指责；点一下按钮的人确实想休息，只是没走成
-        if model.returnedSoon { return "刚才那次没算数\n这回真的站起来走走" }
+        if model.returnedSoon { return Copy.pick(Copy.returnedSoon, model.copyVariant) }
         // 终极提醒不再讲道理，只讲条件：站起来，我就停。
         // 「跟着你」不是威胁，是字面描述——它真的会跟着光标走。
-        if model.urgency == .ultimate { return "站起来两分钟\n我立刻走开" }
-        if model.deferred { return "会议结束了，先把欠的休息补上" }
-        if model.urgency == .strong { return "站起来走一圈，只要两分钟" }
+        if model.urgency == .ultimate { return Copy.pick(Copy.ultimate, model.copyVariant) }
+        if model.duringMeeting { return Copy.pick(Copy.duringMeeting, model.copyVariant) }
+        if model.deferred { return Copy.pick(Copy.deferred, model.copyVariant) }
+        if model.urgency == .strong { return Copy.pick(Copy.strong, model.copyVariant) }
         if model.stage == .sitting {
             return habits.friendMode
                 ? "老地方见，起来走两步\n我一直在这儿"
-                : "起身走两步、喝口水\n五分钟就缓过来了"
+                : Copy.pick(Copy.softSitting, model.copyVariant)
         }
-        return "再不动一动\n我可要自己走开了"
+        return Copy.pick(Copy.stretching, model.copyVariant)
     }
 
     /// 各形象构图比例不同，塞进正方形头像区后的视觉占比差别很大。
@@ -504,4 +513,88 @@ private struct SecondaryButtonStyle: ButtonStyle {
             .contentShape(Rectangle())
             .opacity(configuration.isPressed ? 0.55 : 1)
     }
+}
+
+/// 提醒文案。每一档备几套，按「今天第几次提醒」轮换。
+///
+/// 为什么要有备选：同一个位置反复出现同一句话，第三遍就只剩「哦，又来了」。
+/// 劝阻类文案靠的是**被说中**，不是**被看到**——一旦成了背景音乐，它就不再
+/// 起作用，而用户还占着一个「我已经提醒过了」的心理额度。
+///
+/// 套数定在 3：再多，语气就开始不一致，读者反而记不住这个工具是什么调子。
+/// 三条里的第一条都是原来的原文，保证升级后老用户第一眼不觉得变味。
+///
+/// 写文案的三条规矩（延续卡片上原有的口径）：
+/// 1. 不指责。「你没动」是审判，「起来走两步」是建议
+/// 2. 不用感叹号堆情绪，一串感叹号只会显得心虚
+/// 3. 每条都要有一个具体的动作或时长，别只喊口号
+enum Copy {
+    /// 取第 index 套，越界自动绕回。索引可以是负的（防御）
+    static func pick(_ options: [String], _ index: Int) -> String {
+        guard !options.isEmpty else { return "" }
+        let n = options.count
+        return options[((index % n) + n) % n]
+    }
+
+    // MARK: 软提醒 · 还坐着
+
+    static let softSitting = [
+        "起身走两步、喝口水\n五分钟就缓过来了",
+        "这一个小时你一直没起身\n现在站起来，就两分钟",
+        "坐满一小时了\n先起来走一圈再回来继续",
+    ]
+
+    // MARK: 软提醒 · 已经在伸懒腰
+
+    static let stretchingTitle = [
+        "喂——还在坐？",
+        "都站起来了",
+        "腿麻了吧？",
+    ]
+
+    static let stretching = [
+        "再不动一动\n我可要自己走开了",
+        "别急着坐回去\n站够两分钟再落座",
+        "这会儿多站一会儿\n待会儿坐下更舒服",
+    ]
+
+    // MARK: 强提醒
+
+    static let strong = [
+        "站起来走一圈，只要两分钟",
+        "这个小时你还没起来过\n现在是个好机会",
+        "脖子和腰都在硬扛\n起来抻一下",
+    ]
+
+    // MARK: 终极提醒
+
+    static let ultimate = [
+        "站起来两分钟\n我立刻走开",
+        "我不走，你走\n两分钟就够",
+        "最后一次好好说\n起来，我就消失",
+    ]
+
+    // MARK: 会开太久，兜底放的这一次（会议还在进行）
+
+    static let duringMeeting = [
+        "起身站一下，不耽误开会",
+        "麦关着的时候\n起来抻两分钟",
+        "坐着听也是听\n站着听也是听",
+    ]
+
+    // MARK: 开会/静默之后补发
+
+    static let deferred = [
+        "会议结束了，先把欠的休息补上",
+        "刚才在开会吧\n那现在补一次",
+        "会开完了\n站起来两分钟再坐",
+    ]
+
+    // MARK: 点了「我去走走了」但手没停
+
+    static let returnedSoon = [
+        "刚才那次没算数\n这回真的站起来走走",
+        "手还放在键盘上\n这次不算数",
+        "没离开座位就不算休息\n再来一次",
+    ]
 }

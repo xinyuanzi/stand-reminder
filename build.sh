@@ -20,6 +20,8 @@ swiftc -O \
     Sources/Presence.swift \
     Sources/PresenceMachine.swift \
     Sources/SessionStore.swift \
+    Sources/History.swift \
+    Sources/WeekView.swift \
     Sources/Wander.swift \
     Sources/Prefs.swift \
     Sources/Habits.swift \

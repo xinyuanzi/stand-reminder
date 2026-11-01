@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var panel: ReminderPanel?
     private var hosting: NSHostingView<MascotCard>?
     private var settingsWindow: NSWindow?
+    private var weekWindow: NSWindow?
+    private var weekMenuItem: NSMenuItem?
     private var onboardingWindow: NSWindow?
 
     private let prefs = Prefs.shared
@@ -47,6 +49,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lastPersistAt = Date.distantPast
     /// 最近一次读到的空闲秒数，菜单文案用
     private var lastIdle: TimeInterval = 0
+    /// 今天「确凿离开座位」的次数。启动时从历史里恢复——不恢复的话，
+    /// 一天重启两次，本周回顾里的「站起次数」就少两次。
+    private var breakCount: Int = {
+        let key = History.dayKey(Date())
+        return HistoryStore.shared.days.first { $0.dayKey == key }?.breaks ?? 0
+    }()
 
     private var panelVisible = false
     private var pauseUntil: Date?
@@ -263,6 +271,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
 
         if event.settledAway || event.restConfirmed {
+            // 确凿离开 = 离开座位 ≥60 秒。这是「站起次数」唯一可验证的定义，
+            // 不是「起身活动次数」——后者没有任何系统信号能证明。
+            if event.settledAway { breakCount += 1 }
             if event.shouldRecordHabit { recordHabit() }
             hideReminder()
             // 确凿离开过一轮，推掉几次的历史跟着归零（判定机里已清，这里同步 UI）
@@ -272,7 +283,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if event.shouldShowReminder {
             // restUnconfirmed：五分钟前点过「我去走走了」，但手一直没停 —— 卡片要换句话
             showReminder(deferred: event.reminderIsDeferred,
-                         returnedSoon: event.restUnconfirmed)
+                         returnedSoon: event.restUnconfirmed,
+                         duringMeeting: event.reminderDuringMeeting)
         }
 
         // 静默结束（手回来了）补上克制期间欠下的升级计时
@@ -281,7 +293,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             startEscalation()
         }
 
-        if panelVisible, model.urgency == .soft, !machine.inSilence,
+        // 会议中不升级：这条卡片是「会开太久，兜底放一次」的轻提醒，
+        // 升级会立刻把它变成屏保层级 + 提示音 + 贴边巡逻 —— 那就不是轻提醒了。
+        // 会一散，meetingBusy 变 false，下一次 tick 自然会补上升级。
+        if panelVisible, model.urgency == .soft, !machine.inSilence, !meetingBusy,
            machine.focusSeconds >= thresholds.strong {
             upgradeToStrong()
         }
@@ -342,9 +357,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             daySitSeconds: machine.daySitSeconds,
             todayCount: todayCount
         ))
+        recordHistory()
         // 记基准时用 tick 的时刻，不能用 Date()——否则每次都会晚几毫秒，
         // 攒够一圈实际间隔就变成 12 秒了
         lastPersistAt = now
+    }
+
+    /// 把今天的成绩写进历史。
+    ///
+    /// 跟着 `persist` 走（每 10 秒一次）：和 session.json 同一个节奏，
+    /// 崩了最多丢 10 秒，不会出现「早上坐了 3 小时，回顾里没有」。
+    private func recordHistory() {
+        let now = Date()
+        let key = History.dayKey(now)
+        let existing = HistoryStore.shared.days.first { $0.dayKey == key }
+        HistoryStore.shared.recordToday(DayRecord(
+            dayKey: key,
+            sitSeconds: machine.daySitSeconds,
+            breaks: breakCount,
+            reminders: todayCount,
+            // 当前这一段还没结束时也要算进来，否则「最长一段」永远慢一轮
+            longestStretch: max(existing?.longestStretch ?? 0, machine.focusSeconds)
+        ))
     }
 
     /// 启动时续上。**只拿回数字，不补间隙**——关闭期间发生了什么我们一概不知，
@@ -380,7 +414,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: - 弹窗
 
     private func showReminder(deferred: Bool = false, manual: Bool = false,
-                              returnedSoon: Bool = false) {
+                              returnedSoon: Bool = false,
+                              duringMeeting: Bool = false) {
         panelVisible = true
         model.visible = true
         // 手动预览不该占掉今天 8 次的名额
@@ -394,8 +429,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 点了「我去走走了」但手一直没停，五分钟后又弹回来 —— 卡片得自己解释这件事，
         // 否则用户第一反应是「我明明点过休息了，这是 bug 吧」
         model.returnedSoon = returnedSoon
+        // 会中兜底和会后补发用不同的话术，别让卡片在会还开着的时候说「刚才在开会吧」
+        model.duringMeeting = duringMeeting
         // 上一轮推掉几次要带过来：否则卡片一藏一弹就把额度刷回去了
         model.snoozeStreak = machine.snoozeStreak
+        // 文案轮换的下标：今天第几次提醒（从 0 起）。同一天里相邻两次不会撞同一句，
+        // 手动预览不占名额，所以预览看到的是「如果这是今天第 N 次」的那一套。
+        model.copyVariant = max(0, todayCount - 1)
 
         let p = makePanelIfNeeded()
         p.level = .floating
@@ -1037,6 +1077,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         streakMenuItem?.title = habits.progressLine()
             + (habits.doneToday ? " · 今日已打卡" : " · 今天还没打卡")
 
+        let summary = History.summary(HistoryStore.shared.days, containing: Date())
+        weekMenuItem?.title = summary.daysWithData > 0
+            ? "本周坐 \(durationText(summary.totalSit)) · 站起 \(summary.totalBreaks) 次…"
+            : "本周还没有记录…"
+
         pauseMenuItem?.title = isPaused() ? "恢复计时" : "暂停 1 小时"
         unlockAllMenuItem?.state = prefs.debugUnlockAll ? .on : .off
     }
@@ -1060,6 +1105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !Calendar.current.isDate(countDay, inSameDayAs: Date()) {
             countDay = Date()
             todayCount = 0
+            breakCount = 0
             // 跨零点只清「今日累计」，这一轮的专注时长不该断——凌晨加班也是加班
             machine.rolloverDay()
             // 跨零点时把「今天是否已打卡」一起对齐，否则昨天的打卡状态会留在今天
@@ -1081,6 +1127,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         streakMenuItem = NSMenuItem(title: Habits.shared.progressLine(), action: nil, keyEquivalent: "")
         streakMenuItem.isEnabled = false
         menu.addItem(streakMenuItem)
+
+        // 本周回顾：标题本身就是一行摘要，点开是图表。省略号是 macOS 的「会开窗口」约定。
+        let weekItem = NSMenuItem(title: "本周…", action: #selector(openWeek), keyEquivalent: "")
+        weekItem.target = self
+        menu.addItem(weekItem)
+        weekMenuItem = weekItem
 
         menu.addItem(.separator())
 
@@ -1196,6 +1248,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateStatus()
     }
 
+
+    /// 本周回顾窗口。每次打开都按当下的数据重建 —— 这张图看的是「现在这一周的账」，
+    /// 缓存一个旧窗口比重新算一遍更容易出错。
+    @objc private func openWeek() {
+        let now = Date()
+        let days = HistoryStore.shared.days
+        let view = WeekView(
+            summary: History.summary(days, containing: now),
+            weekStart: History.startOfWeek(now),
+            todayKey: History.dayKey(now),
+            lastWeekTotal: History.lastWeekTotal(days, containing: now)
+        )
+        let host = NSHostingView(rootView: view)
+        host.layoutSubtreeIfNeeded()
+        let size = host.fittingSize
+
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "本周"
+        window.contentView = host
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+
+        // 旧窗口直接丢掉引用，交给 isReleasedWhenClosed 的相反路径回收：
+        // 这里显式关掉，避免用户反复点菜单时堆一串窗口
+        weekWindow?.close()
+        weekWindow = window
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     @objc private func openSettings() {
         if settingsWindow == nil {
             let host = NSHostingView(rootView: SettingsView())
@@ -1261,6 +1349,7 @@ extension AppDelegate {
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
         if window === settingsWindow { settingsWindow = nil }
+        if window === weekWindow { weekWindow = nil }
         if window === onboardingWindow { onboardingWindow = nil }
     }
 }

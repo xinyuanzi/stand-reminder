@@ -11,6 +11,7 @@ OUT="$(mktemp -d)/presence_test"
 swiftc -O \
     Sources/PresenceMachine.swift \
     Sources/SessionStore.swift \
+    Sources/History.swift \
     Sources/Wander.swift \
     Tools/PresenceTest/main.swift \
     -o "$OUT"

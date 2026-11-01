@@ -34,10 +34,22 @@ struct PresenceThresholds: Equatable {
     var restWindow: Double
     /// 观察窗口内，手停够这么久就算人真的走开了（回到原始需求里的「离开 1 分钟算休息」）
     var restQuiet: Double
+    /// 会议中推迟的上限：压了这么久就不再压，照弹一次。
+    ///
+    /// 「不打扰」不等于「一整天不提醒」。10-31 那天用户开了 64 分钟会，
+    /// `deferredPending` 从头欠到尾，`todayCount` 一整天是 0 —— 一个提醒工具
+    /// 唯一的失败方式就是「该提醒时没提醒」，而它偏偏在久坐最狠的场景里闭嘴。
+    ///
+    /// **只对会议生效，不适用于长静默**。两者的区别是「人在不在」：
+    /// 会议有麦克风/摄像头占用这条正向证据，人肯定在座位上；长静默的定义恰恰是
+    /// 「手停了半小时以上，可能根本不在」，弹了多半是弹给空椅子。长静默维持
+    /// D-22 的口径：累计照涨、先不弹，手一回来立刻补发。
+    var deferCap: Double
 
     init(focusMinutes: Int, strongMinutes: Int, silentMinutes: Int,
          longSilentMinutes: Int, awayMin: Double = 60,
-         restWindow: Double = 300, restQuiet: Double = 60) {
+         restWindow: Double = 300, restQuiet: Double = 60,
+         deferCap: Double = 1800) {
         soft = Double(focusMinutes * 60)
         strong = Double(max(strongMinutes, focusMinutes) * 60)
         silent = Double(silentMinutes * 60)
@@ -46,6 +58,7 @@ struct PresenceThresholds: Equatable {
         self.awayMin = awayMin
         self.restWindow = restWindow
         self.restQuiet = restQuiet
+        self.deferCap = deferCap
     }
 }
 
@@ -57,6 +70,9 @@ struct PresenceEvent: Equatable {
     var inLongSilence = false
     /// 恰好在这一步完成了一次「确凿离开」结算
     var settledAway = false
+    /// 这一次弹窗是「会开太久，兜底放一次」——和会后补发不是一回事：
+    /// 会后补发时会议已经结束，兜底时人还在会里，文案不能写「刚才在开会吧」
+    var reminderDuringMeeting = false
     /// 结算那一刻已经坐够软提醒阈值 → 该记一次打卡
     var shouldRecordHabit = false
     /// 静默刚刚结束（手回来了），调用方可以把克制期间欠下的升级计时补上
@@ -213,12 +229,20 @@ struct PresenceMachine: Equatable {
 
         if !input.panelVisible, !reminderFired, input.canRemind,
            focusSeconds >= t.soft {
-            // 确凿离开、正在开会、手停了半小时以上：先不打断，但要记着欠了一条
-            if input.away || input.inMeeting || inLongSilence {
+            // 确凿离开、正在开会、手停了半小时以上：先不打断，但要记着欠了一条。
+            //
+            // 欠账有上限（`deferCap`）：压满这么久就照弹一次。
+            // 这条只对「人可能还在座位上」的两种抑制生效——开会、长静默。
+            // `away` 不在此列：人真的不在，弹了也没人看，还要被 settle 收走。
+            let overdue = focusSeconds - t.soft >= t.deferCap
+            // 长静默无条件压着（人可能不在）；会议的压制有上限（人在，只是不方便）
+            let heldByPresence = inLongSilence || (input.inMeeting && !overdue)
+            if input.away || heldByPresence {
                 deferredPending = true
             } else {
                 event.shouldShowReminder = true
                 event.reminderIsDeferred = deferredPending
+                event.reminderDuringMeeting = input.inMeeting
                 deferredPending = false
                 reminderFired = true
             }

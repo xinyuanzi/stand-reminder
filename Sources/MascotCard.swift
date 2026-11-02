@@ -82,6 +82,9 @@ final class ReminderModel: ObservableObject {
     @Published var snoozeStreak: Int = 0
     /// 今天第几次提醒，**从 0 开始**。用来轮换文案，见 `Copy`
     @Published var copyVariant: Int = 0
+    /// 宠物的显示帧变了。AppDelegate 拿它去把整块视图标脏——
+    /// SwiftUI 换图只标脏新图那一块，旧帧露在外面的像素没人擦，就是重影。
+    var onFrameChanged: (() -> Void)?
     /// 会开太久兜底放的这一次（会议还在进行中）
     @Published var duringMeeting: Bool = false
 
@@ -405,6 +408,7 @@ struct MascotCard: View {
             if model.visible { startIdleMotion() }
         }
         .onChange(of: model.urgency) { _ in syncPulse() }
+        .onChange(of: displayPose) { _ in model.onFrameChanged?() }
         .onChange(of: model.visible) { visible in
             // 面板 orderOut 之后不该继续跑重复动画，纯烧电
             if visible { startIdleMotion() } else { stopIdleMotion() }

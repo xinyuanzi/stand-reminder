@@ -448,6 +448,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 onSnooze: { [weak self] in self?.didSnooze() },
                 onPoke: { [weak self] in self?.handlePoke() }
             )
+            // 换帧时把整块视图标脏。
+            //
+            // layerContentsRedrawPolicy = .onSetNeedsDisplay 只解决「被标脏时是否
+            // 重画整个 layer」，管不了「脏区有多大」——SwiftUI 换图只标脏新图那块，
+            // 旧帧露在外面的部分（坐姿的椅子、猫的轮廓）永远等不到重绘，就是用户
+            // 截图里那只半透明的自己。这里每次换帧主动把整块标脏。
+            //
+            // 顺手作废窗口阴影：透明面板的阴影是按内容形状算的，内容变了不重算，
+            // 旧形状的影子会留在原地。
+            model.onFrameChanged = { [weak self] in
+                guard let self, let h = self.hosting else { return }
+                h.needsDisplay = true
+                h.layer?.setNeedsDisplay()
+                self.panel?.invalidateShadow()
+            }
+
             let h = NSHostingView(rootView: view)
             hosting = h
             // 内容一变就重绘。默认策略（.duringViewResize）只在视图尺寸变化时

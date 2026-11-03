@@ -517,7 +517,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 判断修正：静默只该拦**强提醒升级**（见 tick 里 upgradeToStrong 的条件），
         // 不该拦这个。游走是软提醒阶段的手段，需求原话就是「一直没点就让它动」，
         // 而且横向慢速移动本身很轻，不构成打扰。
-        startEscalation()
+        //
+        // 但有一种情况不该从软提醒重新开始：点了「我去走走了」却没走。
+        //
+        // 这是全应用唯一一次「用户主动做出承诺、然后没兑现」——按钮按下去的那一刻
+        // 他已经承认该休息了。再从「喂——还在坐？」劝一遍，等于把这份承诺的分量
+        // 抹平，用户会觉得「点不点都一样」。所以这种卡片直接进强提醒：变橙、
+        // 提到屏保层级、出声、贴右缘巡逻。
+        if returnedSoon {
+            upgradeToStrong()
+        } else {
+            startEscalation()
+        }
         startGazeTracking()
         updateStatus()
     }

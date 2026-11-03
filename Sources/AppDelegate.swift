@@ -1063,9 +1063,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             normalTitle = " 暂停"
         } else if prefs.inQuietHours() {
             normalTitle = " 免打扰"
-        } else if todayCount >= prefs.dailyCap {
-            normalTitle = " \(minutes)m 已满"
         } else {
+            // 今日已满不再在状态栏打字。理由：状态栏只有几个字符的宽度，
+            // 「8 次用完了」这件事菜单第二行「已提醒 8 / 8 次」已经说清楚，
+            // 没必要让「已满」两个字长期占着标题。
             normalTitle = " \(minutes)m\(deferTag)"
         }
         let title = Date() < statusFlashUntil ? (statusFlash ?? normalTitle) : normalTitle

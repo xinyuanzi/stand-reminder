@@ -56,8 +56,8 @@ struct SettingsView: View {
                     // 点过「再等一会儿」的话累计会回退，永远到不了这个数。
                     labeled("强提醒", "累计 \(prefs.strongMinutes) 分钟仍不理会才升级")
                 }
-                Stepper(value: $prefs.dailyCap, in: 1...30) {
-                    labeled("每日上限", "最多提醒 \(prefs.dailyCap) 次")
+                Stepper(value: $prefs.dailyGoal, in: 1...30) {
+                    labeled("每日目标", "到 \(prefs.dailyGoal) 次算达标，超了照样提醒")
                 }
                 Stepper(value: $prefs.snoozeMinutes, in: 1...30) {
                     labeled("稍后提醒", "延迟 \(prefs.snoozeMinutes) 分钟")

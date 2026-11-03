@@ -56,8 +56,10 @@ final class Prefs: ObservableObject {
         didSet { store.set(meetingAware, forKey: "meetingAware") }
     }
 
-    @Published var dailyCap: Int {
-        didSet { store.set(dailyCap, forKey: "dailyCap") }
+    /// 今天的提醒目标次数。**到目标只是达标，不是停止**——超了照样提醒，
+    /// 它只是菜单里那个进度数字的分母。
+    @Published var dailyGoal: Int {
+        didSet { store.set(dailyGoal, forKey: "dailyGoal") }
     }
 
     /// 吉祥物风格："a" 3D 毛绒橘猫 / "b" 手绘水彩水獭 / "c" 羊毛毡小熊
@@ -104,7 +106,9 @@ final class Prefs: ObservableObject {
         ultimateEnabled = store.object(forKey: "ultimateEnabled") as? Bool ?? true
         ultimateMinutes = store.object(forKey: "ultimateMinutes") as? Int ?? 5
         meetingAware = store.object(forKey: "meetingAware") as? Bool ?? true
-        dailyCap = store.object(forKey: "dailyCap") as? Int ?? 8
+        // 老版本的键叫 dailyCap，语义从「上限」改成了「目标」，值直接沿用
+        dailyGoal = store.object(forKey: "dailyGoal") as? Int
+            ?? store.object(forKey: "dailyCap") as? Int ?? 8
         mascotStyle = store.string(forKey: "mascotStyle") ?? "c"
         wanderEnabled = store.object(forKey: "wanderEnabled") as? Bool ?? true
         escalateSeconds = store.object(forKey: "escalateSeconds") as? Double ?? 12

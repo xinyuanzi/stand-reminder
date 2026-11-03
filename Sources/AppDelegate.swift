@@ -92,8 +92,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lastStatusTitle = ""
     /// 状态栏临时播报（打卡、解锁），到点自动恢复常驻文案
     private var statusFlash: String?
-    /// 今天的额度刚用完，等卡片收起来时在状态栏提一句
-    private var capNoticePending = false
     private var statusFlashUntil = Date.distantPast
     /// 观察连续天数，解锁的瞬间自动换上形象
     private var streakCancellable: AnyCancellable?
@@ -267,7 +265,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 delta: delta,
                 panelVisible: panelVisible,
                 // 暂停 / 免打扰 / 今日已满只拦「弹不弹」，不拦记账
-                canRemind: !isPaused() && !prefs.inQuietHours() && todayCount < prefs.dailyCap
+                // 每日次数不是上限，只是目标：超过照样提醒，别把「提醒」做成配额
+                canRemind: !isPaused() && !prefs.inQuietHours()
             ),
             thresholds: thresholds
         )
@@ -421,12 +420,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panelVisible = true
         model.visible = true
         // 手动预览不该占掉今天 8 次的名额
-        if !manual {
-            todayCount += 1
-            // 第 8 次是今天最后一张卡片。用户不会知道"这是最后一次"，
-            // 等半小时后数字涨到 71 分钟才发现没人管——那一刻才提示就晚了。
-            if todayCount >= prefs.dailyCap { capNoticePending = true }
-        }
+        if !manual { todayCount += 1 }
 
         let minutes = max(prefs.focusMinutes, Int(machine.focusSeconds / 60))
         model.minutes = minutes
@@ -620,11 +614,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func hideReminder() {
-        // 额度用完的那一刻说一句，然后就不再打扰
-        if capNoticePending {
-            capNoticePending = false
-            flashStatus("今天不再提醒", seconds: 4)
-        }
         stopEscalation()
         stopWandering()
         stopPatrolling()
@@ -1108,14 +1097,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else {
             awayNote = ""
         }
-        // 额度用完这件事，状态栏按你的要求不显示；但菜单第一行必须说，
-        // 否则「数字一直在涨却再也不弹」就成了无声失败。
-        let capNote = todayCount >= prefs.dailyCap
-            ? " · 今日 \(todayCount)/\(prefs.dailyCap) 次已用完" : ""
-        focusMenuItem?.title = "已连续专注 \(minutes) 分钟\(awayNote)（软 \(prefs.focusMinutes) / 强 \(prefs.strongMinutes)）\(capNote)"
+        focusMenuItem?.title = "已连续专注 \(minutes) 分钟\(awayNote)（软 \(prefs.focusMinutes) / 强 \(prefs.strongMinutes)）"
         // 今日累计不受归零影响，是「今天一共坐了多久」——比单看这一轮更真实
+        // 目标是目标，不是配额：超过目标就这么写着，不做任何限制
         countMenuItem?.title = "今日坐 \(durationText(machine.daySitSeconds))"
-            + " · 已提醒 \(todayCount) / \(prefs.dailyCap) 次"
+            + " · 已提醒 \(todayCount) 次（目标 \(prefs.dailyGoal)）"
 
         let habits = Habits.shared
         streakMenuItem?.title = habits.progressLine()

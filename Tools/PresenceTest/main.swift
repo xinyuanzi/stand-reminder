@@ -253,7 +253,7 @@ do {
     check(m.inSilence && !m.inLongSilence, "应处于静默但不是长静默")
 }
 
-// MARK: - 10. 暂停 / 免打扰 / 今日已满：不弹，也不该攒成待补发
+// MARK: - 10. 暂停 / 免打扰：不弹，也不该攒成待补发
 
 do {
     var m = PresenceMachine()

@@ -316,6 +316,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             startWandering()
         }
 
+        // 兜底重绘：卡片挂着的时候每秒整块重画一次。
+        //
+        // 重影的成因至今没能稳定复现（本地 747 帧抓不到），所以不赌某一条路径。
+        // 这条的意义是「不管什么原因留下的旧像素，最多存在一秒」——一秒后整块被
+        // 卡片自己重画一遍盖掉。一次 342×348 的重绘，和 30fps 的位移比可以忽略。
+        if panelVisible { hosting?.needsDisplay = true }
+
+        // 兜底重绘：卡片挂着的时候每秒整块重画一次。
+        //
+        // 重影的成因至今没能稳定复现（本地 747 帧抓不到），所以不赌某一条路径。
+        // 这条的意义是「不管什么原因留下的旧像素，最多存在一秒」——一秒后整块被
+        // 卡片自己重画一遍盖掉。一次 342×348 的重绘，和 30fps 的位移比可以忽略。
+        if panelVisible { hosting?.needsDisplay = true }
+
         // 可用区域可能变了（全屏进出、Dock 收起又回来、换屏），先把卡片拉回来，
         // 否则它会压在 Dock 上或者跑到屏幕外。
         clampPanelIntoUsableArea()

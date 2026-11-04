@@ -338,16 +338,18 @@ struct MascotCard: View {
                     .modifier(ZoomIfNeeded(zoom: mascotZoom))
                     .offset(mascotOffset)
                 }
-                .frame(width: 126, height: 126)
-                // 裁成圆角矩形而不是圆形。
+                // 画布给到 146，但布局仍只占 126。
                 //
-                // 圆形裁剪对 a 橘猫 / c 小熊 / e 柴犬 是空操作（素材包围盒完全在圆内），
-                // 但 b 水獭被裁掉 8.3%（zoom 1.45，最远越界 18pt）、
-                // d 猫头鹰 2.3%（6.2pt）—— 这两只是靠这个 clip 在兜住缩放后的溢出，
-                // 直接删掉会让水獭横向压到卡片边缘、猫头鹰往下顶到标题。
-                // 换成圆角矩形：既不再把宠物切出一个圆形的「头像一个」，
-                // 又保留了「不许溢出盒子」这层保护。
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                // 原来这里 126 包 126、再用圆角矩形裁掉边角。问题是猫头鹰的 zoom 是 1.30，
+                // 实测它的内容比盒子高 7pt、flap1（振翅）横向再多 8pt —— 于是几乎每一帧
+                // 都在被这条 clip 切：上下各掉 3.4pt，呼吸动画往上一飘，头顶那块就没了。
+                // 「不许溢出盒子」这条规矩本身没错，错在盒子比内容小。
+                //
+                // 现在给 20pt 余量（每边 10），恰好覆盖实测最大越界 + 呼吸位移 ±2pt；
+                // 外面的 .frame(126) 保证卡片的纵向排版一点没变。
+                .frame(width: 146, height: 146)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .frame(width: 126, height: 126)
                 .contentShape(Rectangle())
             }
             .buttonStyle(BareButtonStyle())

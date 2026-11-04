@@ -316,12 +316,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             startWandering()
         }
 
-        // 巡逻的自愈。同一套理由：被拖走、连戳躲闪、升级到终极提醒都会停掉它，
-        // 少恢复一条就是「强提醒又变成一张静止的贴图」。
-        if panelVisible, model.urgency == .strong, patrolTimer == nil,
-           Date().timeIntervalSince(lastManualMoveAt) > 1.5 {
-            startPatrolling()
-        }
+        // 可用区域可能变了（全屏进出、Dock 收起又回来、换屏），先把卡片拉回来，
+        // 否则它会压在 Dock 上或者跑到屏幕外。
+        clampPanelIntoUsableArea()
 
         // 巡逻的自愈。同一套理由：被拖走、连戳躲闪、升级到终极提醒都会停掉它，
         // 少恢复一条就是「强提醒又变成一张静止的贴图」。
@@ -738,13 +735,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func wanderStep() {
         guard let p = panel, p.isVisible, wanderRect.width > 0 else { return }
 
+        // 每帧重新取可用区：全屏进出、Dock 收起/展开都会让它变。
+        // 用弹窗那一刻缓存的矩形，卡片会被推到 Dock 底下。
+        let rect = (p.screen ?? activeScreen)?.visibleFrame ?? wanderRect
         // 碰边反弹的规则在 Wander 里（纯函数，有测试），这里只负责取值和落地
-        let minX = wanderRect.minX + panelMargin
-        let maxX = wanderRect.maxX - p.frame.width - panelMargin
+        let minX = rect.minX + panelMargin
+        let maxX = rect.maxX - p.frame.width - panelMargin
         guard let x = Wander.stepX(from: p.frame.origin.x,
                                    direction: &wanderDirection,
                                    minX: minX, maxX: maxX) else { return }
-        let target = NSPoint(x: x, y: wanderRect.minY + panelMargin)
+        let target = NSPoint(x: x, y: rect.minY + panelMargin)
         autoMovedTo = target
         p.setFrameOrigin(target)
     }
@@ -1278,6 +1278,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateStatus()
     }
 
+
+    /// 把卡片拽回当前的可用区域。
+    ///
+    /// 位置只在弹窗那一刻算一次，但「可用区域」会变：进过一次全屏 Space
+    /// （Dock 和菜单栏都消失，visibleFrame 变成整个屏幕）、Dock 临时收起、
+    /// 换显示器、改分辨率。等 Dock 回来，卡片就压在它上面 —— 用户截图里
+    /// 那张「按钮被 Dock 从中间切开」就是这么来的。
+    ///
+    /// 每秒校正一次，越界才动手，平时不碰它。用户正在拖的时候也不碰。
+    private func clampPanelIntoUsableArea() {
+        guard panelVisible, let p = panel, p.isVisible else { return }
+        guard Date().timeIntervalSince(lastManualMoveAt) > 0.4 else { return }
+        guard let visible = (p.screen ?? activeScreen ?? preferredScreen())?.visibleFrame,
+              visible.width > 100 else { return }
+
+        let minX = visible.minX + panelMargin
+        let maxX = visible.maxX - p.frame.width - panelMargin
+        let minY = visible.minY + panelMargin
+        let maxY = visible.maxY - p.frame.height - panelMargin
+        var o = p.frame.origin
+        if minX <= maxX { o.x = min(max(o.x, minX), maxX) }
+        if minY <= maxY { o.y = min(max(o.y, minY), maxY) }
+        guard o != p.frame.origin else { return }
+        autoMovedTo = o
+        p.setFrameOrigin(o)
+    }
 
     /// 本周回顾窗口。每次打开都按当下的数据重建 —— 这张图看的是「现在这一周的账」，
     /// 缓存一个旧窗口比重新算一遍更容易出错。

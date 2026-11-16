@@ -126,7 +126,10 @@ struct MascotCard: View {
 
     var onRest: () -> Void
     var onSnooze: () -> Void
-    var onPause: () -> Void
+    /// 默认空实现：这是一条纯 UI 回调，加必填参数会把 Tools/ 下六个
+    /// 拿卡片做夹具的小工具全部变成编译不过（WanderTest / GifShot /
+    /// WindowShot / PokeTest / GazeTest / FullscreenTest）。
+    var onPause: () -> Void = {}
     var onPoke: () -> Void
 
     @State private var pulse = false

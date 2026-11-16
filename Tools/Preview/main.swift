@@ -97,5 +97,5 @@ animator.hold(MascotPose(rawValue: poseName) ?? .sit)
 let card = MascotCard(model: model, animator: animator, onRest: {}, onSnooze: {}, onPause: {}, onPoke: {})
 let suffix = model.canSnooze ? "" : "_nosnooze"
 let tag = model.returnedSoon ? "_soon" : suffix
-render(card, size: NSSize(width: 342, height: 360),
+render(card, size: NSSize(width: 342, height: 372),
        to: "/tmp/card_\(style)_\(poseName)_\(urgencyName)\(tag)_cv\(copyVariant).png")

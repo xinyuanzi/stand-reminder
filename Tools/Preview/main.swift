@@ -94,7 +94,7 @@ if ProcessInfo.processInfo.environment["DM"] != nil { model.duringMeeting = true
 let animator = MascotAnimator()
 animator.hold(MascotPose(rawValue: poseName) ?? .sit)
 
-let card = MascotCard(model: model, animator: animator, onRest: {}, onSnooze: {}, onPoke: {})
+let card = MascotCard(model: model, animator: animator, onRest: {}, onSnooze: {}, onPause: {}, onPoke: {})
 let suffix = model.canSnooze ? "" : "_nosnooze"
 let tag = model.returnedSoon ? "_soon" : suffix
 render(card, size: NSSize(width: 342, height: 360),

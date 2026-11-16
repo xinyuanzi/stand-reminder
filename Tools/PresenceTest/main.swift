@@ -536,6 +536,18 @@ do {
 }
 
 do {
+    // 19.1b 没坐够阈值，但卡片是真提醒弹出来的（force）：照样开观察窗，不清零。
+    var m = PresenceMachine()
+    var now = 0.0
+    for _ in 1...600 { now += 1; _ = m.step(now: now, input: beat(now), thresholds: T) }
+    let before = m.focusSeconds
+    check(m.claimRest(now: now, thresholds: T, force: true),
+          "\(restBtn)真卡片没坐够也该开观察窗口")
+    check(near(m.focusSeconds, before), "开窗不该清零，实际 \(m.focusSeconds)")
+    check(m.awaitingRestSince != nil, "force 之后窗口应打开")
+}
+
+do {
     // 19.2 坐够了点休息：先不清零，窗口开着
     var m = PresenceMachine()
     var now = 0.0

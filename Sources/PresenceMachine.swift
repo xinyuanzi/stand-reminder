@@ -183,10 +183,17 @@ struct PresenceMachine: Equatable {
     ///
     /// 返回「是否开了窗口」。调用方据此决定是「先不打卡，等确认」还是「按老路走」。
     @discardableResult
-    mutating func claimRest(now: Double, thresholds t: PresenceThresholds) -> Bool {
-        guard focusSeconds >= t.soft else {
-            reset()
-            return false
+    mutating func claimRest(now: Double, thresholds t: PresenceThresholds,
+                            force: Bool = false) -> Bool {
+        // force：卡片是用户被真提醒到之后点的，不管坐没坐够都要开观察窗。
+        // 「我说我去走走了」是用户意图，验证交给观察窗；在意图前面再加一道
+        // 时长门槛，只会让按钮变成「点了没反应、还把我计时清零了」。
+        // 默认 false 保留给预览卡片：那一轮什么都没发生，谈不上验证休息。
+        if !force {
+            guard focusSeconds >= t.soft else {
+                reset()
+                return false
+            }
         }
         // 已经在该窗口里了就别重置计时，否则连点两下能无限延长观察期
         if awaitingRestSince == nil { awaitingRestSince = now }

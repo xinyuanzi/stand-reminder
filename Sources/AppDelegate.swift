@@ -39,6 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 自动行为（游走 / 追光标）在这之后的一小段静默期内不抢窗口位置，
     /// 免得用户刚把它挪开、它自己又溜回去。
     private var lastManualMoveAt = Date.distantPast
+    /// 用户手动摆过卡片之后，自动位移（游走/巡逻/追光标）在这之前一律不许动它
+    private var userPlacedUntil = Date.distantPast
 
     /// 判定机：累计、离开结算、静默、待补发全在它里面，这里只负责把系统信号喂进去、
     /// 再按它吐出来的事实去弹窗。逻辑抽成纯函数是为了能跑时间轴用例（Tools/run_tests.sh）。
@@ -57,6 +59,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }()
 
     private var panelVisible = false
+    /// 这张卡片是从菜单「立即提醒我一次」预览出来的，不是真的到点提醒
+    private var reminderWasManual = false
     private var pauseUntil: Date?
     private var todayCount = 0
     private var countDay = Date()
@@ -88,8 +92,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var streakMenuItem: NSMenuItem!
     private var unlockAllMenuItem: NSMenuItem!
     private var pauseMenuItem: NSMenuItem!
+    /// 暂停期间顶替「暂停」出现在同一位置，两者不会同时可见
+    private var resumeMenuItem: NSMenuItem!
+    /// 「暂停」子菜单的时长档位（分钟）
+    static let pauseChoices = [15, 30, 60, 120]
+    /// 上一次同步到菜单的暂停状态，避免每秒重复切换显隐
+    private var lastPausedState: Bool?
     /// 状态栏当前文案，用来避免每秒重复赋值触发重绘
     private var lastStatusTitle = ""
+    /// 状态栏当前图标，同样只在状态真的变了才换
+    private var lastIconState: StatusIconState?
     /// 状态栏临时播报（打卡、解锁），到点自动恢复常驻文案
     private var statusFlash: String?
     private var statusFlashUntil = Date.distantPast
@@ -113,8 +125,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "figure.walk",
-                                           accessibilityDescription: "歇会儿")
+        statusItem.button?.image = StatusIconState.normal.image
+        statusItem.button?.setAccessibilityLabel("歇会儿")
         statusItem.button?.imagePosition = .imageLeading
         statusItem.button?.title = " 0m"
 
@@ -312,6 +324,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 1.5 秒的静默期是留给手动干预的：刚被拖过就先别抢回来。
         if panelVisible, model.urgency == .soft, model.stage == .stretching,
            prefs.wanderEnabled, wanderTimer == nil, chaseTimer == nil,
+           Date() >= userPlacedUntil,
            Date().timeIntervalSince(lastManualMoveAt) > 1.5 {
             startWandering()
         }
@@ -337,6 +350,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 巡逻的自愈。同一套理由：被拖走、连戳躲闪、升级到终极提醒都会停掉它，
         // 少恢复一条就是「强提醒又变成一张静止的贴图」。
         if panelVisible, model.urgency == .strong, patrolTimer == nil,
+           Date() >= userPlacedUntil,
            Date().timeIntervalSince(lastManualMoveAt) > 1.5 {
             startPatrolling()
         }
@@ -346,6 +360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 静默期间故意不装：手没在动，追一个不动的光标没有意义。
         if panelVisible, model.urgency == .ultimate, prefs.ultimateEnabled,
            !machine.inSilence, chaseTimer == nil,
+           Date() >= userPlacedUntil,
            Date().timeIntervalSince(lastManualMoveAt) > 1.5 {
             startChasing()
         }
@@ -367,7 +382,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         SessionStore.save(SessionStore.Snapshot(
             focusSeconds: machine.focusSeconds,
             daySitSeconds: machine.daySitSeconds,
-            todayCount: todayCount
+            todayCount: todayCount,
+            pauseUntil: isPaused() ? pauseUntil : nil
         ))
         recordHistory()
         // 记基准时用 tick 的时刻，不能用 Date()——否则每次都会晚几毫秒，
@@ -399,6 +415,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let snapshot = SessionStore.load() else { return }
         let restored = SessionStore.restore(snapshot)
         todayCount = restored.todayCount
+        pauseUntil = restored.pause
         machine.adopt(focusSeconds: restored.focus, daySitSeconds: restored.daySit)
         if restored.focus > 0 {
             flashStatus("续上 \(Int(restored.focus / 60)) 分钟", seconds: 4)
@@ -432,6 +449,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.visible = true
         // 手动预览不该占掉今天 8 次的名额
         if !manual { todayCount += 1 }
+        reminderWasManual = manual
 
         let minutes = max(prefs.focusMinutes, Int(machine.focusSeconds / 60))
         model.minutes = minutes
@@ -458,6 +476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 animator: animator,
                 onRest: { [weak self] in self?.didRest() },
                 onSnooze: { [weak self] in self?.didSnooze() },
+                onPause: { [weak self] in self?.didPauseFromCard() },
                 onPoke: { [weak self] in self?.handlePoke() }
             )
             // 换帧时把整块视图标脏。
@@ -588,12 +607,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// 以鼠标所在屏幕为准。NSScreen.main 会随窗口焦点在双屏间漂移，不能作为定位依据。
+    /// 弹窗放哪块屏。
+    ///
+    /// 原来只看鼠标位置。鼠标留在副屏、人在主屏打字时，卡片会弹在没人看的那块屏上
+    /// 飘一下就走，等于这次提醒丢了。所以先问「前台应用的窗口在哪块屏」——
+    /// 注意力跟着窗口走，不跟着光标走；拿不到再退回鼠标位置。
+    ///
+    /// 只读窗口的几何信息（位置 + 所属进程），不读标题也不读内容，
+    /// 所以不需要屏幕录制授权。
     private func preferredScreen() -> NSScreen? {
+        if let screen = screenOfFrontmostWindow() { return screen }
         let mouse = NSEvent.mouseLocation
         if let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) {
             return screen
         }
         return NSScreen.main ?? NSScreen.screens.first
+    }
+
+    /// 前台应用主窗口所在的那块屏；拿不到返回 nil，让调用方退回去看鼠标
+    private func screenOfFrontmostWindow() -> NSScreen? {
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                                       kCGNullWindowID) as? [[String: Any]],
+              let primary = NSScreen.screens.first
+        else { return nil }
+
+        let pid = app.processIdentifier
+        var best: (area: CGFloat, screen: NSScreen)?
+        for info in windows {
+            guard let owner = info[kCGWindowOwnerPID as String] as? Int32, owner == pid,
+                  let raw = info[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: raw as CFDictionary),
+                  rect.width >= 120, rect.height >= 120
+            else { continue }
+
+            let area = rect.width * rect.height
+            if let current = best, current.area >= area { continue }
+            // CoreGraphics 原点在左上，AppKit 在左下，用主屏高度换算
+            let center = CGPoint(x: rect.midX, y: primary.frame.height - rect.midY)
+            if let screen = NSScreen.screens.first(where: { $0.frame.contains(center) }) {
+                best = (area, screen)
+            }
+        }
+        return best?.screen
     }
 
     private func makePanelIfNeeded() -> ReminderPanel {
@@ -668,10 +725,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 或者手停够久，才算真休息（见 PresenceMachine.resolveAwaitingRest）。
         // 没坐够阈值就点（比如「立即提醒我一次」的预览卡片）没什么可确认的，
         // claimRest 内部会直接清零。
-        machine.claimRest(now: Date().timeIntervalSince1970, thresholds: thresholds)
+        let claimed = machine.claimRest(now: Date().timeIntervalSince1970,
+                                        thresholds: thresholds,
+                                        force: !reminderWasManual)
         hideReminder()
         syncSnoozeStreak()
         persist()
+        if !claimed {
+            // 只剩预览卡片会走到这里：没坐够阈值，这一轮也没有真实提醒发生过，
+            // 直接清零会让用户以为「点了没用」，所以说明白
+            flashStatus("预览不记这次起身", seconds: 3)
+        }
         updateStatus()
     }
 
@@ -1028,6 +1092,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // 到这里才真的是用户在拖
         lastManualMoveAt = Date()
+        // 30 秒内不再自动接管：手动摆位置是最强的意图信号，不该被当成「暂时挪一下」
+        userPlacedUntil = Date().addingTimeInterval(30)
         stopWandering()
         stopChasing()
 
@@ -1035,6 +1101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // tick 的自愈只管软提醒阶段的游走，所以这段不能省。
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             guard let self, self.panelVisible else { return }
+            guard Date() >= self.userPlacedUntil else { return }
             guard Date().timeIntervalSince(self.lastManualMoveAt) >= 0.9 else { return }
             if self.model.urgency == .ultimate {
                 // 只有终极提醒会回到「跟着你」。强提醒被拖走就停在你放的
@@ -1060,6 +1127,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: - 菜单
 
+    /// 菜单栏图标该长什么样。
+    /// 优先级：正在强提醒 > 观察窗口 > 暂停 > 免打扰 > 普通计时。
+    /// 强提醒 / 终极提醒只算「卡片还挂着」的时候——卡片收了，图标回到普通猫。
+    private var currentIconState: StatusIconState {
+        if panelVisible, model.urgency == .ultimate { return .ultimate }
+        if panelVisible, model.urgency == .strong { return .strong }
+        if machine.awaitingRestSince != nil { return .observing }
+        if isPaused() { return .paused }
+        if prefs.inQuietHours() { return .quiet }
+        return .normal
+    }
+
     private func updateStatus() {
         let minutes = Int(machine.focusSeconds / 60)
 
@@ -1073,9 +1152,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 推迟本身可以接受，**无声地推迟不行**。
         let deferTag = machine.deferredPending ? (meetingBusy ? " · 开会" : " · 手停") : ""
 
+        let paused = isPaused()
+        // 点完「我去走走了」有一段用户看不见的 5 分钟观察期。不显性化的话，
+        // 卡片到时又带着一句「你好像没走开」回来，体感是在抓包；
+        // 写成倒计时，同一个判定就从「监视」变成「提前说好的约定」。
+        let restLeft = restWatchRemaining
+
         let normalTitle: String
-        if isPaused() {
-            normalTitle = " 暂停"
+        if paused {
+            normalTitle = " 暂停 \(pauseRemainingMinutes)m"
+        } else if let left = restLeft {
+            // 观察期直接用自己的倒计时，吞掉「· 开会」——那时人没在开会
+            normalTitle = " 观察 \(clockText(left))"
         } else if prefs.inQuietHours() {
             normalTitle = " 免打扰"
         } else {
@@ -1091,11 +1179,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             lastStatusTitle = title
         }
 
+        // 图标跟着状态换，同样只在真的变了才写
+        let icon = currentIconState
+        if icon != lastIconState {
+            lastIconState = icon
+            statusItem.button?.image = icon.image
+        }
+
         // 数字还在涨的时候，必须说清楚为什么——不然用户只会以为计时坏了。
         // 会议优先于长静默：开会时麦克风在采集，人肯定在，此时说「手停 60 分钟」
         // 既不准确，又正好把最该解释的那一句挤掉了。
         let awayNote: String
-        if meetingBusy {
+        if let left = restLeft {
+            awayNote = " · 观察中：熄屏或手停 60 秒才算休息（还剩 \(clockText(left))）"
+        } else if meetingBusy {
             if !machine.deferredPending {
                 awayNote = " · 会议中照常计时"
             } else if deferredMinutes >= 1 {
@@ -1126,8 +1223,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ? "本周坐 \(durationText(summary.totalSit)) · 站起 \(summary.totalBreaks) 次…"
             : "本周还没有记录…"
 
-        pauseMenuItem?.title = isPaused() ? "恢复计时" : "暂停 1 小时"
+        // 暂停 / 恢复共用一个位置：只让其中一个可见，菜单里永远只有一条「暂停 ××」
+        if lastPausedState != paused {
+            lastPausedState = paused
+            pauseMenuItem?.isHidden = paused
+            resumeMenuItem?.isHidden = !paused
+        }
+        if paused {
+            resumeMenuItem?.title = "恢复计时（还剩 \(pauseRemainingMinutes) 分钟）"
+        }
         unlockAllMenuItem?.state = prefs.debugUnlockAll ? .on : .off
+    }
+
+    /// 暂停还剩多少分钟。向上取整——剩 30 秒时显示「0 分钟」等于告诉用户已经好了
+    private var pauseRemainingMinutes: Int {
+        guard let until = pauseUntil else { return 0 }
+        return max(0, Int((until.timeIntervalSince(Date()) / 60).rounded(.up)))
+    }
+
+    /// 「我去走走了」的观察窗口还剩几秒，nil = 不在观察期
+    private var restWatchRemaining: Double? {
+        guard let since = machine.awaitingRestSince else { return nil }
+        let left = thresholds.restWindow - (Date().timeIntervalSince1970 - since)
+        return left > 0 ? left : nil
+    }
+
+    private func clockText(_ seconds: Double) -> String {
+        let total = max(0, Int(seconds.rounded(.up)))
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 
     private func durationText(_ seconds: Double) -> String {
@@ -1200,9 +1323,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         menu.addItem(.separator())
 
-        pauseMenuItem = NSMenuItem(title: "暂停 1 小时", action: #selector(togglePause), keyEquivalent: "p")
-        pauseMenuItem.target = self
+        // 只有「1 小时」一档时，写方案（可能要 90 分钟）、开个短会（20 分钟）、
+        // 午休外出（2 小时）都得迁就它。时长交给子菜单，主条目只当入口。
+        pauseMenuItem = NSMenuItem(title: "暂停", action: nil, keyEquivalent: "")
+        let pauseMenu = NSMenu()
+        for minutes in Self.pauseChoices {
+            let item = NSMenuItem(title: "暂停 \(minutes) 分钟",
+                                  action: #selector(pauseForMinutes(_:)), keyEquivalent: "")
+            item.tag = minutes
+            item.target = self
+            pauseMenu.addItem(item)
+        }
+        // ⌘P 仍然等于「1 小时」，不动原来的肌肉记忆
+        pauseMenu.item(withTag: 60)?.keyEquivalent = "p"
+        pauseMenuItem.submenu = pauseMenu
         menu.addItem(pauseMenuItem)
+
+        // 暂停期间这个位置换成「恢复计时」，由 updateStatus 切换显隐
+        resumeMenuItem = NSMenuItem(title: "恢复计时", action: #selector(resumeTimer), keyEquivalent: "p")
+        resumeMenuItem.target = self
+        resumeMenuItem.isHidden = true
+        menu.addItem(resumeMenuItem)
 
         let settingsItem = NSMenuItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
@@ -1270,8 +1411,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateStatus()
     }
 
-    @objc private func togglePause() {
-        pauseUntil = isPaused() ? nil : Date().addingTimeInterval(3600)
+    @objc private func pauseForMinutes(_ sender: NSMenuItem) {
+        pauseUntil = Date().addingTimeInterval(Double(sender.tag) * 60)
+        updateStatus()
+    }
+
+    @objc private func resumeTimer() {
+        pauseUntil = nil
+        updateStatus()
+    }
+
+    /// 卡片上的「我在开会，暂停 1 小时」：开会时最想要的动作，不该逼用户去点菜单栏
+    private func didPauseFromCard() {
+        pauseUntil = Date().addingTimeInterval(3600)
+        hideReminder()
+        persist()
         updateStatus()
     }
 

@@ -15,6 +15,7 @@ swiftc -O \
     -framework AppKit \
     -framework SwiftUI \
     Sources/main.swift \
+    Sources/StatusIcon.swift \
     Sources/AppDelegate.swift \
     Sources/IdleClock.swift \
     Sources/Presence.swift \

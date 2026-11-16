@@ -96,6 +96,10 @@ final class ReminderModel: ObservableObject {
     static let maxSnoozeStreak = 3
 
     var canSnooze: Bool { snoozeStreak < Self.maxSnoozeStreak }
+
+    /// 这一轮还剩几次「再等」。写在按钮上——原来只有点满之后的解释文案，
+    /// 用户点之前根本不知道有额度这回事。
+    var remainingSnooze: Int { max(0, Self.maxSnoozeStreak - snoozeStreak) }
 }
 
 /// 被戳时说的短句。都控制在 8 字内，标题一行放得下。
@@ -122,6 +126,7 @@ struct MascotCard: View {
 
     var onRest: () -> Void
     var onSnooze: () -> Void
+    var onPause: () -> Void
     var onPoke: () -> Void
 
     @State private var pulse = false
@@ -387,7 +392,7 @@ struct MascotCard: View {
 
                 if model.canSnooze {
                     Button(action: onSnooze) {
-                        Text("再等 \(prefs.snoozeMinutes) 分钟")
+                        Text("再等 \(prefs.snoozeMinutes) 分钟（剩 \(model.remainingSnooze) 次）")
                     }
                     .buttonStyle(SecondaryButtonStyle())
                 } else {
@@ -400,11 +405,24 @@ struct MascotCard: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 4)
                 }
+
+                // 开会时最想要的动作其实不是「再等 5 分钟」，是「这一小时别烦我」。
+                // 这个动作原来只存在于菜单栏，而卡片是唯一会跑到你面前的东西。
+                Button(action: onPause) {
+                    Text("我在开会，暂停 1 小时")
+                        .font(.system(size: 11))
+                        .foregroundColor(Color(red: 0.46, green: 0.45, blue: 0.42))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 3)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(0.9)
             }
             .padding(.top, 1)
         }
         .padding(18)
-        .frame(width: 286, height: 292)
+        .frame(width: 286, height: 316)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(cardFill)

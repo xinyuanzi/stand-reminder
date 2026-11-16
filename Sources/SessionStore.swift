@@ -13,12 +13,16 @@ enum SessionStore {
         var todayCount: Int
         var savedAt: Date
         var dayKey: String
+        /// 暂停到期时间。跟着快照走——开会前点了「暂停 2 小时」，中途重启/更新/
+        /// 崩溃回来不该继续被弹。老快照没这个字段，解码成 nil。
+        var pauseUntil: Date?
 
         init(focusSeconds: Double, daySitSeconds: Double, todayCount: Int,
-             savedAt: Date = Date(), dayKey: String? = nil) {
+             pauseUntil: Date? = nil, savedAt: Date = Date(), dayKey: String? = nil) {
             self.focusSeconds = focusSeconds
             self.daySitSeconds = daySitSeconds
             self.todayCount = todayCount
+            self.pauseUntil = pauseUntil
             self.savedAt = savedAt
             self.dayKey = dayKey ?? SessionStore.dayKey(savedAt)
         }
@@ -42,13 +46,16 @@ enum SessionStore {
 
     /// 恢复决策。纯函数，磁盘那层只是它的壳，测试里直接喂快照验。
     static func restore(_ snapshot: Snapshot, now: Date = Date())
-        -> (focus: Double, daySit: Double, todayCount: Int) {
-        guard snapshot.dayKey == dayKey(now) else { return (0, 0, 0) }
+        -> (focus: Double, daySit: Double, todayCount: Int, pause: Date?) {
+        // 暂停不受 10 分钟窗口约束：它本来就是「几小时内别烦我」，只看到期没到期
+        let pause = snapshot.pauseUntil.flatMap { $0 > now ? $0 : nil }
+        guard snapshot.dayKey == dayKey(now) else { return (0, 0, 0, pause) }
         let gap = now.timeIntervalSince(snapshot.savedAt)
         let fresh = gap >= 0 && gap <= restoreWindow
         return (fresh ? max(0, snapshot.focusSeconds) : 0,
                 max(0, snapshot.daySitSeconds),
-                max(0, snapshot.todayCount))
+                max(0, snapshot.todayCount),
+                pause)
     }
 
     // MARK: - 磁盘
